@@ -28,15 +28,17 @@ model Company {
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
-  users             User[]
-  agents            Agent[]
-  products          Product[]
-  leads             Lead[]
-  conversations     Conversation[]
-  messages          Message[]
-  quotes            Quote[]
-  commercialRules   CommercialRule?
-  tokenUsageLogs    TokenUsageLog[]
+  users              User[]
+  agents             Agent[]
+  products           Product[]
+  leads              Lead[]
+  conversations      Conversation[]
+  messages           Message[]
+  quotes             Quote[]
+  commercialRules    CommercialRule?
+  tokenUsageLogs     TokenUsageLog[]
+  companyProducts    CompanyProduct[]
+  productSuggestions ProductSuggestion[]
 
   @@map("companies")
 }
@@ -44,55 +46,69 @@ model Company {
 // ─── USUÁRIOS ────────────────────────────────────────────────────────────────
 
 model User {
-  id          String    @id @default(cuid())
-  companyId   String?
-  name        String
-  email       String    @unique
+  id           String    @id @default(cuid())
+  companyId    String?
+  name         String
+  email        String    @unique
   passwordHash String
-  role        String    @default("operator")
-  isActive    Boolean   @default(true)
-  tokensUsed  Int       @default(0)
-  lastLoginAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  role         String    @default("operator")
+  isActive     Boolean   @default(true)
+  tokensUsed   Int       @default(0)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  company       Company?       @relation(fields: [companyId], references: [id])
-  assignedLeads Lead[]         @relation("AssignedLeads")
-  messages      Message[]      @relation("SentMessages")
+  company       Company?  @relation(fields: [companyId], references: [id])
+  assignedLeads Lead[]    @relation("AssignedLeads")
+  messages      Message[] @relation("SentMessages")
 
   @@map("users")
 }
 
-// ─── AGENTES ────────────────────────────────────────────────────────────────
+// ─── AGENTES ─────────────────────────────────────────────────────────────────
+// isTemplate=true + companyId=null  → template global (gerenciado pelo super admin)
+// isTemplate=false + companyId=set  → agente ativo de uma empresa (instância do template)
 
 model Agent {
-  id               String   @id @default(cuid())
-  companyId        String
-  name             String
-  description      String?
-  type             String   @default("commercial")
-  scope            String   @default("external")
-  prompt           String
-  promptVersion    Int      @default(1)
-  isActive         Boolean  @default(true)
-  triggerKeywords  String[] @default([])
-  requiredFields   String[] @default([])
-  followUpRules    Json     @default("[]")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String   @id @default(cuid())
+  companyId       String?                         // null = template global
+  templateId      String?                         // ID do template de origem (se for instância)
+  isTemplate      Boolean  @default(false)
+  name            String
+  description     String?
+  type            String   @default("commercial")
+  scope           String   @default("external")
+  prompt          String
+  promptVersion   Int      @default(1)
+  isActive        Boolean  @default(true)
+  triggerKeywords String[] @default([])
+  requiredFields  String[] @default([])
+  followUpRules   Json     @default("[]")
+  // Campos dinâmicos que a empresa precisa preencher ao ativar o template
+  // Ex: [{ key: "company_name", label: "Nome da Empresa", type: "text", required: true }]
+  dynamicFields   Json     @default("[]")
+  // Valores dinâmicos preenchidos pela empresa (apenas em instâncias, não em templates)
+  dynamicValues   Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  company       Company        @relation(fields: [companyId], references: [id])
+  company       Company?       @relation(fields: [companyId], references: [id])
+  template      Agent?         @relation("TemplateInstances", fields: [templateId], references: [id])
+  instances     Agent[]        @relation("TemplateInstances")
   conversations Conversation[]
   messages      Message[]
 
   @@map("agents")
 }
 
-// ─── PRODUTOS / EQUIPAMENTOS ────────────────────────────────────────────────
+// ─── PRODUTOS / CATÁLOGO GLOBAL ──────────────────────────────────────────────
+// isGlobal=true + companyId=null  → catálogo global (gerenciado pelo super admin)
+// isGlobal=false + companyId=set → produto exclusivo da empresa (legado / aprovados)
 
 model Product {
   id                   String   @id @default(cuid())
-  companyId            String
+  companyId            String?                     // null = produto global
+  isGlobal             Boolean  @default(false)
   name                 String
   category             String
   description          String?
@@ -111,23 +127,60 @@ model Product {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  company    Company     @relation(fields: [companyId], references: [id])
-  quoteItems QuoteItem[]
+  company         Company?         @relation(fields: [companyId], references: [id])
+  quoteItems      QuoteItem[]
+  companyProducts CompanyProduct[]
 
   @@map("products")
 }
 
+// Seleção de produtos globais por empresa
+model CompanyProduct {
+  id        String   @id @default(cuid())
+  companyId String
+  productId String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([companyId, productId])
+  @@map("company_products")
+}
+
+// Sugestão de produto enviada por empresa para aprovação do admin master
+model ProductSuggestion {
+  id                String   @id @default(cuid())
+  companyId         String
+  name              String
+  category          String
+  description       String?
+  dailyPrice        Decimal  @db.Decimal(10, 2)
+  weeklyPrice       Decimal? @db.Decimal(10, 2)
+  monthlyPrice      Decimal? @db.Decimal(10, 2)
+  status            String   @default("pending") // pending | approved | rejected
+  reviewNote        String?
+  approvedProductId String?  // ID do Product global criado após aprovação
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("product_suggestions")
+}
+
 model CommercialRule {
-  id                  String   @id @default(cuid())
-  companyId           String   @unique
-  hasFixedPriceTable  Boolean  @default(true)
-  allowsDiscount      Boolean  @default(false)
-  maxDiscountPercent  Decimal  @default(0) @db.Decimal(5, 2)
-  paymentMethods      String[] @default([])
-  freightRules        String?
-  additionalRules     String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  companyId          String   @unique
+  hasFixedPriceTable Boolean  @default(true)
+  allowsDiscount     Boolean  @default(false)
+  maxDiscountPercent Decimal  @default(0) @db.Decimal(5, 2)
+  paymentMethods     String[] @default([])
+  freightRules       String?
+  additionalRules    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   company Company @relation(fields: [companyId], references: [id])
 
@@ -137,20 +190,21 @@ model CommercialRule {
 // ─── LEADS ───────────────────────────────────────────────────────────────────
 
 model Lead {
-  id                String    @id @default(cuid())
+  id                String   @id @default(cuid())
   companyId         String
   name              String?
   companyName       String?
   phone             String
-  source            String    @default("whatsapp")
-  stage             String    @default("new")
-  temperature       String    @default("warm")
+  source            String   @default("whatsapp")
+  stage             String   @default("new")
+  temperature       String   @default("warm")
+  notes             String?
   currentAgentId    String?
   assignedUserId    String?
-  context           Json      @default("{}")
-  lastInteractionAt DateTime  @default(now())
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  context           Json     @default("{}")
+  lastInteractionAt DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   company       Company        @relation(fields: [companyId], references: [id])
   assignedUser  User?          @relation("AssignedLeads", fields: [assignedUserId], references: [id])
@@ -164,17 +218,17 @@ model Lead {
 // ─── CONVERSAS ───────────────────────────────────────────────────────────────
 
 model Conversation {
-  id                 String   @id @default(cuid())
-  companyId          String
-  leadId             String
-  currentAgentId     String?
-  stage              String   @default("new")
-  context            Json     @default("{}")
-  isActive           Boolean  @default(true)
-  handedOffToHuman   Boolean  @default(false)
-  totalTokensUsed    Int      @default(0)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id               String   @id @default(cuid())
+  companyId        String
+  leadId           String
+  currentAgentId   String?
+  stage            String   @default("new")
+  context          Json     @default("{}")
+  isActive         Boolean  @default(true)
+  handedOffToHuman Boolean  @default(false)
+  totalTokensUsed  Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   company      Company   @relation(fields: [companyId], references: [id])
   lead         Lead      @relation(fields: [leadId], references: [id])
@@ -191,6 +245,7 @@ model Message {
   conversationId    String
   direction         String
   content           String
+  role              String   @default("user")
   type              String   @default("text")
   agentId           String?
   sentByUserId      String?
@@ -199,10 +254,10 @@ model Message {
   tokensUsed        Int?
   createdAt         DateTime @default(now())
 
-  company      Company       @relation(fields: [companyId], references: [id])
-  conversation Conversation  @relation(fields: [conversationId], references: [id])
-  agent        Agent?        @relation(fields: [agentId], references: [id])
-  sentByUser   User?         @relation("SentMessages", fields: [sentByUserId], references: [id])
+  company      Company      @relation(fields: [companyId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  agent        Agent?       @relation(fields: [agentId], references: [id])
+  sentByUser   User?        @relation("SentMessages", fields: [sentByUserId], references: [id])
 
   @@map("messages")
 }
@@ -210,19 +265,20 @@ model Message {
 // ─── ORÇAMENTOS ──────────────────────────────────────────────────────────────
 
 model Quote {
-  id               String      @id @default(cuid())
+  id               String    @id @default(cuid())
   companyId        String
   leadId           String
-  totalValue       Decimal     @db.Decimal(10, 2)
-  discountPercent  Decimal     @default(0) @db.Decimal(5, 2)
+  totalValue       Decimal   @db.Decimal(10, 2)
+  discountPercent  Decimal   @default(0) @db.Decimal(5, 2)
   deliveryLocation String?
   startDate        DateTime?
   endDate          DateTime?
-  status           String      @default("draft")
+  validUntil       DateTime?
+  status           String    @default("draft")
   pdfUrl           String?
   notes            String?
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   company Company     @relation(fields: [companyId], references: [id])
   lead    Lead        @relation(fields: [leadId], references: [id])
@@ -250,16 +306,16 @@ model QuoteItem {
 // ─── CONTROLE DE TOKENS ──────────────────────────────────────────────────────
 
 model TokenUsageLog {
-  id           String   @id @default(cuid())
-  companyId    String
-  userId       String?
-  agentId      String?
+  id             String   @id @default(cuid())
+  companyId      String
+  userId         String?
+  agentId        String?
   conversationId String?
-  tokensIn     Int
-  tokensOut    Int
-  totalTokens  Int
-  model        String
-  createdAt    DateTime @default(now())
+  tokensIn       Int
+  tokensOut      Int
+  totalTokens    Int
+  model          String
+  createdAt      DateTime @default(now())
 
   company Company @relation(fields: [companyId], references: [id])
 

@@ -22,7 +22,8 @@
       "Bash(node -e \"const pkg = require\\('./node_modules/@tabler/icons-react/package.json'\\); console.log\\(pkg.version\\)\")",
       "Bash(node -e \"const pkg = require\\('C:/Users/Usuario/Downloads/htcore/apps/web/node_modules/@tabler/icons-react/package.json'\\); console.log\\(pkg.version\\)\")",
       "Bash(gh auth *)",
-      "PowerShell($env:PATH += \";C:\\\\Program Files\\\\GitHub CLI\"; gh auth login --web --git-protocol https)"
+      "PowerShell($env:PATH += \";C:\\\\Program Files\\\\GitHub CLI\"; gh auth login --web --git-protocol https)",
+      "mcp__036f57f2-a225-434b-8243-11f5a7abd314__apply_migration"
     ]
   }
 }

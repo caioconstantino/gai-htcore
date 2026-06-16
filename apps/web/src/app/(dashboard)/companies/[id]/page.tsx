@@ -60,8 +60,11 @@ export default function CompanyDetailPage() {
 
   const { data: company, isLoading } = useQuery<Company>({
     queryKey: ["company", id],
-    queryFn: () => api.get(`/companies/${id}`).then((r) => r.data),
-    onSuccess: (d) => setEditForm({ name: d.name, plan: d.plan, tokenLimit: d.tokenLimit, userLimit: d.userLimit, aiProvider: d.aiProvider, aiModel: d.aiModel, whatsappPhoneNumberId: d.whatsappPhoneNumberId ?? "", whatsappToken: d.whatsappToken ?? "" }),
+    queryFn: () => api.get(`/companies/${id}`).then((r) => {
+      const d: Company = r.data;
+      setEditForm({ name: d.name, plan: d.plan, tokenLimit: d.tokenLimit, userLimit: d.userLimit, aiProvider: d.aiProvider, aiModel: d.aiModel, whatsappPhoneNumberId: d.whatsappPhoneNumberId ?? "", whatsappToken: d.whatsappToken ?? "" });
+      return d;
+    }),
   });
 
   const { data: usersData } = useQuery<{ data: User[] }>({

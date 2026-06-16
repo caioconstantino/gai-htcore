@@ -3,17 +3,19 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
-  Box, Button, Card, Text, Title, Stack, Group, Badge, SimpleGrid, Skeleton,
-  ThemeIcon, Modal, TextInput, Textarea, Switch, ActionIcon, Menu, NumberInput, Select, Tooltip,
+  Box, Button, Card, Text, Title, Stack, Group, Badge, Skeleton, Tabs,
+  Modal, TextInput, Textarea, NumberInput, Select, Table, ActionIcon, Tooltip,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
-import { IconPackage, IconPlus, IconStar, IconTrendingUp, IconDots, IconPencil, IconTrash } from "@tabler/icons-react";
+import {
+  IconPackage, IconPlus, IconCheck, IconX, IconAlertCircle, IconShoppingCart,
+} from "@tabler/icons-react";
 
-interface Product {
+interface GlobalProduct {
   id: string; name: string; category: string; description: string | null;
   dailyPrice: string; weeklyPrice: string | null; monthlyPrice: string | null;
-  isActive: boolean; isMostSold: boolean; isHighRevenue: boolean;
+  selectedByCompany?: boolean; companyProductActive?: boolean;
 }
 
 const categoryOptions = [
@@ -21,65 +23,50 @@ const categoryOptions = [
   "Ferramentas", "Plataformas", "Compressores", "Iluminação", "Outros",
 ];
 
-function fmt(value: string | null) {
-  if (!value) return "—";
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value));
+function fmt(v: string | null) {
+  if (!v) return "—";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v));
 }
 
-function ProductModal({ opened, onClose, product }: { opened: boolean; onClose: () => void; product?: Product }) {
+function SuggestModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const qc = useQueryClient();
-  const isEdit = !!product;
-
   const form = useForm({
     initialValues: {
-      name: product?.name ?? "",
-      category: product?.category ?? "Outros",
-      description: product?.description ?? "",
-      dailyPrice: product ? Number(product.dailyPrice) : 0,
-      weeklyPrice: product?.weeklyPrice ? Number(product.weeklyPrice) : null as number | null,
-      monthlyPrice: product?.monthlyPrice ? Number(product.monthlyPrice) : null as number | null,
-      isActive: product?.isActive ?? true,
-      isMostSold: product?.isMostSold ?? false,
-      isHighRevenue: product?.isHighRevenue ?? false,
+      name: "", category: "Outros", description: "",
+      dailyPrice: 0, weeklyPrice: null as number | null, monthlyPrice: null as number | null,
     },
   });
 
   const mutation = useMutation({
-    mutationFn: (values: typeof form.values) =>
-      isEdit
-        ? api.patch(`/products/${product!.id}`, values).then((r) => r.data)
-        : api.post("/products", values).then((r) => r.data),
+    mutationFn: (v: typeof form.values) => api.post("/global-products/suggestions", v).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["products"] });
-      notifications.show({ message: isEdit ? "Produto atualizado!" : "Produto criado!", color: "green" });
+      qc.invalidateQueries({ queryKey: ["my-suggestions"] });
+      notifications.show({ message: "Sugestão enviada! Aguarde aprovação do administrador.", color: "green" });
       onClose(); form.reset();
     },
-    onError: () => notifications.show({ message: "Erro ao salvar produto", color: "red" }),
+    onError: () => notifications.show({ message: "Erro ao enviar sugestão", color: "red" }),
   });
 
   return (
-    <Modal opened={opened} onClose={onClose} title={isEdit ? "Editar Produto" : "Novo Produto"} size="lg" radius="lg">
+    <Modal opened={opened} onClose={onClose} title="Sugerir novo produto" size="lg" radius="lg">
+      <Text size="sm" c="dimmed" mb="md">
+        Se um produto que você trabalha não estiver no catálogo, sugira-o. O administrador vai revisar e aprovar.
+      </Text>
       <form onSubmit={form.onSubmit((v) => mutation.mutate(v))}>
         <Stack gap="md">
           <Group grow>
-            <TextInput label="Nome do equipamento" placeholder="Escavadeira Hidráulica" required {...form.getInputProps("name")} />
+            <TextInput label="Nome do produto" required {...form.getInputProps("name")} />
             <Select label="Categoria" data={categoryOptions} required {...form.getInputProps("category")} />
           </Group>
-          <Textarea label="Descrição" placeholder="Detalhes técnicos, capacidade, aplicações..." minRows={3} {...form.getInputProps("description")} />
-          <Text size="sm" fw={500}>Preços de locação</Text>
+          <Textarea label="Descrição" minRows={2} {...form.getInputProps("description")} />
           <Group grow>
-            <NumberInput label="Diária (R$)" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} required min={0} {...form.getInputProps("dailyPrice")} />
+            <NumberInput label="Diária (R$)" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} required {...form.getInputProps("dailyPrice")} />
             <NumberInput label="Semanal (R$)" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} {...form.getInputProps("weeklyPrice")} />
             <NumberInput label="Mensal (R$)" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} {...form.getInputProps("monthlyPrice")} />
           </Group>
-          <Group gap="xl">
-            <Switch label="Produto ativo" {...form.getInputProps("isActive", { type: "checkbox" })} />
-            <Switch label="Mais vendido" {...form.getInputProps("isMostSold", { type: "checkbox" })} />
-            <Switch label="Alto ticket" {...form.getInputProps("isHighRevenue", { type: "checkbox" })} />
-          </Group>
-          <Group justify="flex-end" mt="xs">
+          <Group justify="flex-end">
             <Button variant="subtle" onClick={onClose}>Cancelar</Button>
-            <Button type="submit" loading={mutation.isPending}>{isEdit ? "Salvar" : "Criar produto"}</Button>
+            <Button type="submit" loading={mutation.isPending} leftSection={<IconAlertCircle size={16} />}>Enviar sugestão</Button>
           </Group>
         </Stack>
       </form>
@@ -88,84 +75,220 @@ function ProductModal({ opened, onClose, product }: { opened: boolean; onClose: 
 }
 
 export default function ProductsPage() {
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Product | undefined>();
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery<{ data: Product[] }>({
-    queryKey: ["products"],
-    queryFn: () => api.get("/products").then((r) => r.data),
+  const { data: catalogData, isLoading: loadingCatalog } = useQuery<{ data: GlobalProduct[] }>({
+    queryKey: ["global-products"],
+    queryFn: () => api.get("/global-products").then((r) => r.data),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/products/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); notifications.show({ message: "Produto removido", color: "orange" }); },
+  const { data: myProductsData, isLoading: loadingMy } = useQuery<{ data: GlobalProduct[] }>({
+    queryKey: ["my-products"],
+    queryFn: () => api.get("/global-products/my-products").then((r) => r.data),
   });
 
-  const products = data?.data ?? [];
+  const { data: suggestionsData } = useQuery<{ data: { id: string; name: string; status: string; createdAt: string }[] }>({
+    queryKey: ["my-suggestions"],
+    queryFn: () => api.get("/global-products/suggestions").then((r) => r.data),
+  });
+
+  const selectMutation = useMutation({
+    mutationFn: (productId: string) => api.post(`/global-products/select/${productId}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["global-products"] }); qc.invalidateQueries({ queryKey: ["my-products"] }); },
+    onError: () => notifications.show({ message: "Erro ao selecionar produto", color: "red" }),
+  });
+
+  const deselectMutation = useMutation({
+    mutationFn: (productId: string) => api.delete(`/global-products/select/${productId}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["global-products"] }); qc.invalidateQueries({ queryKey: ["my-products"] }); },
+    onError: () => notifications.show({ message: "Erro ao remover produto", color: "red" }),
+  });
+
+  const catalog = catalogData?.data ?? [];
+  const myProducts = myProductsData?.data ?? [];
+  const suggestions = suggestionsData?.data ?? [];
+  const pendingSuggestions = suggestions.filter((s) => s.status === "pending");
 
   return (
     <Stack gap="lg" maw={1200}>
       <Group justify="space-between" align="flex-end">
         <Box>
           <Title order={2} fw={700}>Produtos</Title>
-          <Text c="dimmed" size="sm" mt={4}>{products.length} equipamentos cadastrados</Text>
+          <Text c="dimmed" size="sm" mt={4}>Selecione os produtos que sua empresa trabalha no catálogo global</Text>
         </Box>
-        <Button leftSection={<IconPlus size={16} />} radius="md" onClick={() => { setEditing(undefined); setModalOpen(true); }}>Novo Produto</Button>
+        <Button variant="light" leftSection={<IconAlertCircle size={16} />} onClick={() => setSuggestOpen(true)}>
+          Sugerir produto
+        </Button>
       </Group>
 
-      <ProductModal opened={modalOpen} onClose={() => setModalOpen(false)} product={editing} />
+      <SuggestModal opened={suggestOpen} onClose={() => setSuggestOpen(false)} />
 
-      {isLoading ? (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={180} radius="lg" />)}
-        </SimpleGrid>
-      ) : products.length === 0 ? (
-        <Card padding="xl" radius="lg" withBorder style={{ borderStyle: "dashed" }}>
-          <Stack align="center" py="xl" gap="sm">
-            <IconPackage size={48} color="var(--mantine-color-gray-3)" />
-            <Text fw={500} c="dimmed">Nenhum produto cadastrado</Text>
-            <Text size="sm" c="dimmed">Cadastre equipamentos para o agente incluir nos orçamentos</Text>
-            <Button variant="light" leftSection={<IconPlus size={16} />} mt="xs" onClick={() => { setEditing(undefined); setModalOpen(true); }}>Adicionar produto</Button>
-          </Stack>
-        </Card>
-      ) : (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
-          {products.map((product) => (
-            <Card key={product.id} padding="lg" radius="lg" withBorder shadow="sm">
-              <Group justify="space-between" mb="md">
-                <ThemeIcon size={40} radius="md" color="gray" variant="light"><IconPackage size={20} /></ThemeIcon>
-                <Group gap={6}>
-                  {product.isMostSold && <Tooltip label="Mais vendido"><IconStar size={18} color="var(--mantine-color-yellow-5)" fill="var(--mantine-color-yellow-4)" /></Tooltip>}
-                  {product.isHighRevenue && <Tooltip label="Alto ticket"><IconTrendingUp size={18} color="var(--mantine-color-green-5)" /></Tooltip>}
-                  <Menu withinPortal position="bottom-end" shadow="sm">
-                    <Menu.Target>
-                      <ActionIcon variant="subtle" color="gray" size="sm"><IconDots size={14} /></ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => { setEditing(product); setModalOpen(true); }}>Editar</Menu.Item>
-                      <Menu.Item leftSection={<IconTrash size={14} />} color="red" onClick={() => deleteMutation.mutate(product.id)}>Remover</Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
-                </Group>
-              </Group>
-              <Text fw={600} size="sm" mb={4}>{product.name}</Text>
-              <Group gap="xs" mb="md">
-                <Badge variant="outline" color="gray" size="xs">{product.category}</Badge>
-                <Badge variant="light" color={product.isActive ? "green" : "gray"} size="xs">{product.isActive ? "Ativo" : "Inativo"}</Badge>
-              </Group>
-              <Box p="sm" style={{ background: "var(--mantine-color-gray-0)", borderRadius: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
-                {[["Diária", product.dailyPrice], ["Semanal", product.weeklyPrice], ["Mensal", product.monthlyPrice]].map(([label, val]) => (
-                  <Box key={label as string}>
-                    <Text size="xs" c="dimmed">{label}</Text>
-                    <Text size="xs" fw={700}>{fmt(val as string | null)}</Text>
-                  </Box>
-                ))}
-              </Box>
+      <Tabs defaultValue="catalog">
+        <Tabs.List mb="md">
+          <Tabs.Tab value="catalog" leftSection={<IconPackage size={16} />}>
+            Catálogo Global ({catalog.length})
+          </Tabs.Tab>
+          <Tabs.Tab value="mine" leftSection={<IconShoppingCart size={16} />}>
+            Meus Produtos ({myProducts.length})
+          </Tabs.Tab>
+          <Tabs.Tab value="suggestions" leftSection={<IconAlertCircle size={16} />}>
+            Minhas Sugestões
+            {pendingSuggestions.length > 0 && (
+              <Badge size="xs" color="orange" ml={6}>{pendingSuggestions.length}</Badge>
+            )}
+          </Tabs.Tab>
+        </Tabs.List>
+
+        {/* ── Global catalog ── */}
+        <Tabs.Panel value="catalog">
+          {loadingCatalog ? (
+            <Stack gap="sm">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={52} radius="lg" />)}</Stack>
+          ) : catalog.length === 0 ? (
+            <Card padding="xl" radius="lg" withBorder style={{ borderStyle: "dashed" }}>
+              <Stack align="center" py="xl" gap="sm">
+                <IconPackage size={40} color="var(--mantine-color-gray-3)" />
+                <Text c="dimmed">Catálogo ainda vazio</Text>
+                <Text size="sm" c="dimmed">Aguarde o administrador adicionar produtos ou sugira um</Text>
+                <Button variant="light" size="sm" leftSection={<IconPlus size={14} />} onClick={() => setSuggestOpen(true)}>Sugerir produto</Button>
+              </Stack>
             </Card>
-          ))}
-        </SimpleGrid>
-      )}
+          ) : (
+            <Card padding={0} radius="lg" withBorder shadow="sm">
+              <Table highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Produto</Table.Th>
+                    <Table.Th>Categoria</Table.Th>
+                    <Table.Th ta="right">Diária</Table.Th>
+                    <Table.Th ta="right">Semanal</Table.Th>
+                    <Table.Th ta="right">Mensal</Table.Th>
+                    <Table.Th w={120} ta="center">Selecionado</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {catalog.map((p) => (
+                    <Table.Tr key={p.id} bg={p.companyProductActive ? "var(--mantine-color-green-0)" : undefined}>
+                      <Table.Td>
+                        <Text size="sm" fw={500}>{p.name}</Text>
+                        {p.description && <Text size="xs" c="dimmed" lineClamp={1}>{p.description}</Text>}
+                      </Table.Td>
+                      <Table.Td><Badge variant="outline" color="gray" size="xs">{p.category}</Badge></Table.Td>
+                      <Table.Td ta="right"><Text size="sm" fw={600}>{fmt(p.dailyPrice)}</Text></Table.Td>
+                      <Table.Td ta="right"><Text size="sm">{fmt(p.weeklyPrice)}</Text></Table.Td>
+                      <Table.Td ta="right"><Text size="sm">{fmt(p.monthlyPrice)}</Text></Table.Td>
+                      <Table.Td ta="center">
+                        {p.companyProductActive ? (
+                          <Tooltip label="Remover dos meus produtos" withArrow>
+                            <ActionIcon color="green" variant="light" size="sm"
+                              onClick={() => deselectMutation.mutate(p.id)}
+                              loading={deselectMutation.isPending}>
+                              <IconCheck size={14} />
+                            </ActionIcon>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip label="Adicionar aos meus produtos" withArrow>
+                            <ActionIcon color="gray" variant="subtle" size="sm"
+                              onClick={() => selectMutation.mutate(p.id)}
+                              loading={selectMutation.isPending}>
+                              <IconPlus size={14} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Card>
+          )}
+        </Tabs.Panel>
+
+        {/* ── My products ── */}
+        <Tabs.Panel value="mine">
+          {loadingMy ? (
+            <Stack gap="sm">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={52} radius="lg" />)}</Stack>
+          ) : myProducts.length === 0 ? (
+            <Card padding="xl" radius="lg" withBorder style={{ borderStyle: "dashed" }}>
+              <Stack align="center" py="xl" gap="sm">
+                <IconShoppingCart size={40} color="var(--mantine-color-gray-3)" />
+                <Text c="dimmed">Nenhum produto selecionado</Text>
+                <Text size="sm" c="dimmed">Vá no "Catálogo Global" e clique no ícone + para adicionar produtos</Text>
+              </Stack>
+            </Card>
+          ) : (
+            <Card padding={0} radius="lg" withBorder shadow="sm">
+              <Table highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Produto</Table.Th>
+                    <Table.Th>Categoria</Table.Th>
+                    <Table.Th ta="right">Diária</Table.Th>
+                    <Table.Th ta="right">Semanal</Table.Th>
+                    <Table.Th ta="right">Mensal</Table.Th>
+                    <Table.Th w={80}></Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {myProducts.map((p) => (
+                    <Table.Tr key={p.id}>
+                      <Table.Td>
+                        <Text size="sm" fw={500}>{p.name}</Text>
+                        {p.description && <Text size="xs" c="dimmed" lineClamp={1}>{p.description}</Text>}
+                      </Table.Td>
+                      <Table.Td><Badge variant="outline" color="gray" size="xs">{p.category}</Badge></Table.Td>
+                      <Table.Td ta="right"><Text size="sm" fw={600}>{fmt(p.dailyPrice)}</Text></Table.Td>
+                      <Table.Td ta="right"><Text size="sm">{fmt(p.weeklyPrice)}</Text></Table.Td>
+                      <Table.Td ta="right"><Text size="sm">{fmt(p.monthlyPrice)}</Text></Table.Td>
+                      <Table.Td>
+                        <Tooltip label="Remover" withArrow>
+                          <ActionIcon color="red" variant="subtle" size="sm"
+                            onClick={() => deselectMutation.mutate(p.id)}
+                            loading={deselectMutation.isPending}>
+                            <IconX size={14} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Card>
+          )}
+        </Tabs.Panel>
+
+        {/* ── Suggestions ── */}
+        <Tabs.Panel value="suggestions">
+          {suggestions.length === 0 ? (
+            <Card padding="xl" radius="lg" withBorder style={{ borderStyle: "dashed" }}>
+              <Stack align="center" py="xl" gap="sm">
+                <IconAlertCircle size={40} color="var(--mantine-color-gray-3)" />
+                <Text c="dimmed">Nenhuma sugestão enviada</Text>
+                <Button variant="light" size="sm" leftSection={<IconPlus size={14} />} onClick={() => setSuggestOpen(true)}>Sugerir produto</Button>
+              </Stack>
+            </Card>
+          ) : (
+            <Stack gap="sm">
+              {suggestions.map((s) => (
+                <Card key={s.id} padding="md" radius="lg" withBorder shadow="sm">
+                  <Group justify="space-between">
+                    <Box>
+                      <Text fw={600} size="sm">{s.name}</Text>
+                      <Text size="xs" c="dimmed">Enviado em {new Date(s.createdAt).toLocaleDateString("pt-BR")}</Text>
+                    </Box>
+                    <Badge
+                      color={s.status === "approved" ? "green" : s.status === "rejected" ? "red" : "orange"}
+                      variant="light"
+                    >
+                      {s.status === "approved" ? "Aprovado" : s.status === "rejected" ? "Rejeitado" : "Aguardando revisão"}
+                    </Badge>
+                  </Group>
+                </Card>
+              ))}
+            </Stack>
+          )}
+        </Tabs.Panel>
+      </Tabs>
     </Stack>
   );
 }
