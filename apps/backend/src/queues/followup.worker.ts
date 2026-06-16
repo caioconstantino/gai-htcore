@@ -35,8 +35,7 @@ export async function followUpWorker(job: Job<FollowUpJobData>): Promise<void> {
   }
 
   await sendWhatsAppMessage({
-    phoneNumberId: company.whatsappPhoneNumberId ?? "",
-    token: company.whatsappToken ?? "",
+    apiKey: company.whatsappToken ?? "",
     to: lead.phone,
     text: message,
   });

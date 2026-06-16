@@ -3,18 +3,17 @@ import { prisma } from "../lib/prisma.js";
 import { orchestrate } from "../orchestrator/index.js";
 import { sendWhatsAppMessage } from "../whatsapp/sender.js";
 import { logger } from "../lib/logger.js";
-import { verifyMetaSignature } from "../middleware/webhookSignature.js";
+import { verify360Signature } from "../middleware/webhookSignature.js";
 import type { WhatsAppWebhookPayload } from "../types.js";
 
 export const webhookRouter: ExpressRouter = Router();
 
-// Parse raw body for HMAC validation — must come before express.json()
+// Capture raw body for HMAC validation — must run before express.json()
 webhookRouter.use((req, _res, next) => {
   let data = Buffer.alloc(0);
   req.on("data", (chunk: Buffer) => { data = Buffer.concat([data, chunk]); });
   req.on("end", () => {
     (req as typeof req & { rawBody: Buffer }).rawBody = data;
-    // Manually parse JSON after capturing raw body
     try {
       if (data.length > 0) req.body = JSON.parse(data.toString("utf8"));
     } catch {
@@ -24,24 +23,15 @@ webhookRouter.use((req, _res, next) => {
   });
 });
 
-// Webhook verification by Meta
-webhookRouter.get("/:companySlug", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-    logger.info("WhatsApp webhook verified", { slug: req.params.companySlug });
-    res.status(200).send(challenge);
-  } else {
-    logger.warn("WhatsApp webhook verification failed", { slug: req.params.companySlug, ip: req.ip });
-    res.sendStatus(403);
-  }
+// 360dialog does NOT use a GET verification challenge — omit that endpoint.
+// If needed for testing: GET /:companySlug returns 200 OK.
+webhookRouter.get("/:companySlug", (_req, res) => {
+  res.sendStatus(200);
 });
 
-// Receive messages — validate HMAC first
-webhookRouter.post("/:companySlug", verifyMetaSignature, async (req, res) => {
-  // Respond immediately (Meta requires < 20s)
+// Receive messages from 360dialog
+webhookRouter.post("/:companySlug", async (req, res) => {
+  // Respond immediately — 360dialog expects < 10s
   res.sendStatus(200);
 
   const slug = req.params.companySlug;
@@ -58,6 +48,20 @@ webhookRouter.post("/:companySlug", verifyMetaSignature, async (req, res) => {
       return;
     }
 
+    if (!company.whatsappToken) {
+      logger.warn("Company has no 360dialog API key configured", { slug });
+      return;
+    }
+
+    // Validate signature using the company's own API key as the HMAC secret
+    // (360dialog sandbox does not send signatures, so this is a no-op in sandbox)
+    await new Promise<void>((resolve, reject) => {
+      const middleware = verify360Signature(company.whatsappToken!);
+      middleware(req, res, (err?: unknown) => {
+        if (err) reject(err); else resolve();
+      });
+    });
+
     for (const entry of payload.entry ?? []) {
       for (const change of entry.changes ?? []) {
         const value = change.value;
@@ -66,9 +70,12 @@ webhookRouter.post("/:companySlug", verifyMetaSignature, async (req, res) => {
         for (const message of value.messages) {
           if (message.type !== "text") continue;
 
-          logger.debug("Processing WhatsApp message", {
+          const contactName = value.contacts?.[0]?.profile?.name;
+
+          logger.info("Processing 360dialog message", {
             companyId: company.id,
             from: message.from,
+            name: contactName,
             messageId: message.id,
           });
 
@@ -81,8 +88,7 @@ webhookRouter.post("/:companySlug", verifyMetaSignature, async (req, res) => {
 
           if (response) {
             await sendWhatsAppMessage({
-              phoneNumberId: value.metadata.phone_number_id,
-              token: company.whatsappToken ?? "",
+              apiKey: company.whatsappToken,
               to: message.from,
               text: response,
             });

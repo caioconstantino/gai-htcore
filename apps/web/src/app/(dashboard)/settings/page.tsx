@@ -1,15 +1,19 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import {
   Box, Card, Text, Title, Stack, Group, ThemeIcon, TextInput, Select,
-  Button, Divider, Badge, Progress, PasswordInput,
+  Button, Divider, Badge, Progress, PasswordInput, CopyButton, ActionIcon,
+  Tooltip, Code,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
-import { IconBrandWhatsapp, IconRobot, IconBuilding, IconDeviceFloppy } from "@tabler/icons-react";
+import {
+  IconBrandWhatsapp, IconRobot, IconBuilding, IconDeviceFloppy,
+  IconCopy, IconCheck, IconRefresh,
+} from "@tabler/icons-react";
 
 interface Company {
   id: string; name: string; slug: string; plan: string; isActive: boolean;
@@ -25,6 +29,7 @@ export default function SettingsPage() {
   const { user } = useAuthStore();
   const qc = useQueryClient();
   const companyId = user?.companyId;
+  const [webhookUrl, setWebhookUrl] = useState("");
 
   const { data: company } = useQuery<Company>({
     queryKey: ["company", companyId],
@@ -33,7 +38,7 @@ export default function SettingsPage() {
   });
 
   const whatsappForm = useForm({
-    initialValues: { whatsappPhoneNumberId: "", whatsappToken: "" },
+    initialValues: { whatsappToken: "" },
   });
 
   const aiForm = useForm({
@@ -42,9 +47,14 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (company) {
-      whatsappForm.setValues({ whatsappPhoneNumberId: company.whatsappPhoneNumberId ?? "", whatsappToken: "" });
       aiForm.setValues({ aiProvider: company.aiProvider ?? "openai", aiModel: company.aiModel ?? "gpt-4o-mini" });
+      // Build webhook URL for display (backend port)
+      if (typeof window !== "undefined") {
+        const backendBase = window.location.origin.replace(/:\d+$/, ":3001");
+        setWebhookUrl(`${backendBase}/webhook/${company.slug}`);
+      }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company]);
 
   const mutation = useMutation({
@@ -95,38 +105,54 @@ export default function SettingsPage() {
         </Stack>
       </Card>
 
-      {/* WhatsApp config */}
+      {/* 360dialog config */}
       <Card padding="lg" radius="lg" withBorder shadow="sm">
         <Group mb="md">
           <ThemeIcon size={40} radius="md" color="green" variant="light"><IconBrandWhatsapp size={20} /></ThemeIcon>
           <Box>
-            <Text fw={600} size="sm">WhatsApp Business API</Text>
-            <Text size="xs" c="dimmed">Configure sua integração com a Meta</Text>
+            <Text fw={600} size="sm">WhatsApp via 360dialog</Text>
+            <Text size="xs" c="dimmed">Configure sua chave de API da 360dialog</Text>
           </Box>
         </Group>
-        <form onSubmit={whatsappForm.onSubmit((v) => mutation.mutate({ whatsappPhoneNumberId: v.whatsappPhoneNumberId || null, ...(v.whatsappToken ? { whatsappToken: v.whatsappToken } : {}) }))}>
+
+        <form onSubmit={whatsappForm.onSubmit((v) => {
+          if (!v.whatsappToken) { notifications.show({ message: "Informe a API Key", color: "red" }); return; }
+          mutation.mutate({ whatsappToken: v.whatsappToken });
+        })}>
           <Stack gap="md">
-            <TextInput
-              label="Phone Number ID"
-              description="Encontrado no Meta for Developers → WhatsApp → API Setup"
-              placeholder="123456789012345"
-              {...whatsappForm.getInputProps("whatsappPhoneNumberId")}
-            />
             <PasswordInput
-              label="Access Token"
-              description="Token permanente gerado no Meta Business Manager"
-              placeholder="EAAxxxxx..."
+              label="360dialog API Key (D360-API-KEY)"
+              description="Encontrada no painel da 360dialog → sua conta → API Key"
+              placeholder="ER5JD9Y6HJJCW1NX4I28M8CU8JR0WVQW"
               {...whatsappForm.getInputProps("whatsappToken")}
             />
-            <Box p="sm" style={{ background: "var(--mantine-color-blue-0)", borderRadius: 8, border: "1px solid var(--mantine-color-blue-2)" }}>
-              <Text size="xs" c="blue.7" fw={500}>URL do Webhook para configurar no Meta:</Text>
-              <Text size="xs" c="blue.6" style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
-                {typeof window !== "undefined" ? `${window.location.origin.replace("3000", "3001")}/webhook/${company?.slug ?? "sua-empresa"}` : ""}
+
+            {/* Webhook URL info box */}
+            <Box p="sm" style={{ background: "var(--mantine-color-green-0)", borderRadius: 8, border: "1px solid var(--mantine-color-green-2)" }}>
+              <Text size="xs" c="green.8" fw={600} mb={4}>URL do Webhook para configurar na 360dialog:</Text>
+              <Group gap="xs" align="center">
+                <Code style={{ flex: 1, wordBreak: "break-all", fontSize: 11 }}>
+                  {webhookUrl || "https://seu-backend.com/webhook/" + (company?.slug ?? "sua-empresa")}
+                </Code>
+                <CopyButton value={webhookUrl} timeout={2000}>
+                  {({ copied, copy }) => (
+                    <Tooltip label={copied ? "Copiado!" : "Copiar"} withArrow>
+                      <ActionIcon color={copied ? "teal" : "gray"} variant="subtle" size="sm" onClick={copy}>
+                        {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                </CopyButton>
+              </Group>
+              <Text size="xs" c="dimmed" mt={6}>
+                Salve a API Key acima e peça ao administrador para registrar o webhook na 360dialog.
               </Text>
-              <Text size="xs" c="dimmed" mt={4}>Verify Token: <code>{process.env.NEXT_PUBLIC_WA_VERIFY_TOKEN ?? "gai_whatsapp_verify_2026"}</code></Text>
             </Box>
+
             <Group justify="flex-end">
-              <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending}>Salvar WhatsApp</Button>
+              <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending}>
+                Salvar API Key
+              </Button>
             </Group>
           </Stack>
         </form>
@@ -159,7 +185,9 @@ export default function SettingsPage() {
               {...aiForm.getInputProps("aiModel")}
             />
             <Group justify="flex-end">
-              <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending}>Salvar IA</Button>
+              <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending}>
+                Salvar IA
+              </Button>
             </Group>
           </Stack>
         </form>

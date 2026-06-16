@@ -7,15 +7,59 @@ import { useParams, useRouter } from "next/navigation";
 import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, Tabs,
   Skeleton, ThemeIcon, Progress, Modal, TextInput, Select,
-  PasswordInput, ActionIcon, Switch, SimpleGrid, NumberInput,
+  PasswordInput, ActionIcon, Switch, SimpleGrid, NumberInput, Code,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
   IconBuilding, IconPlus, IconArrowLeft, IconUsers,
   IconRobot, IconBolt, IconSettings, IconPencil,
-  IconCheck, IconX,
+  IconCheck, IconX, IconRefresh, IconBrandWhatsapp,
 } from "@tabler/icons-react";
+
+// ── Register 360dialog webhook button ───────────────────────────
+function RegisterWebhookButton({ companyId, companySlug }: { companyId: string; companySlug: string }) {
+  const [result, setResult] = useState<{ webhookUrl: string } | null>(null);
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/companies/${companyId}/register-webhook`).then((r) => r.data),
+    onSuccess: (data) => {
+      setResult(data);
+      notifications.show({ message: "Webhook registrado com sucesso na 360dialog!", color: "green" });
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Erro ao registrar webhook";
+      notifications.show({ message: msg, color: "red" });
+    },
+  });
+
+  return (
+    <Stack gap="sm">
+      {result && (
+        <Box p="sm" style={{ background: "var(--mantine-color-green-0)", borderRadius: 8, border: "1px solid var(--mantine-color-green-3)" }}>
+          <Text size="xs" c="green.8" fw={600} mb={4}>Webhook registrado:</Text>
+          <Code style={{ fontSize: 11, wordBreak: "break-all" }}>{result.webhookUrl}</Code>
+        </Box>
+      )}
+      <Group>
+        <Button
+          leftSection={<IconBrandWhatsapp size={16} />}
+          color="green"
+          variant="light"
+          loading={mutation.isPending}
+          onClick={() => mutation.mutate()}
+          size="sm"
+        >
+          Registrar webhook na 360dialog
+        </Button>
+        {result && (
+          <Button leftSection={<IconRefresh size={14} />} variant="subtle" size="sm" color="gray" onClick={() => mutation.mutate()}>
+            Re-registrar
+          </Button>
+        )}
+      </Group>
+    </Stack>
+  );
+}
 
 interface Company {
   id: string; name: string; slug: string; plan: string; isActive: boolean;
@@ -289,34 +333,41 @@ export default function CompanyDetailPage() {
 
           {/* Settings Tab */}
           <Tabs.Panel value="settings">
-            <Card padding="lg" radius="lg" withBorder shadow="sm">
-              <Stack gap="md">
-                <Text fw={600} size="sm">Configurações da Empresa</Text>
-                <Group grow>
-                  <Box>
-                    <Text size="xs" c="dimmed" mb={4}>WhatsApp Phone ID</Text>
-                    <Text size="sm" fw={500}>{company.whatsappPhoneNumberId ?? "—"}</Text>
-                  </Box>
-                  <Box>
-                    <Text size="xs" c="dimmed" mb={4}>Provedor de IA</Text>
-                    <Text size="sm" fw={500}>{company.aiProvider} · {company.aiModel}</Text>
-                  </Box>
-                </Group>
-                <Group grow>
-                  <Box>
-                    <Text size="xs" c="dimmed" mb={4}>Limite de usuários</Text>
-                    <Text size="sm" fw={500}>{company.userLimit}</Text>
-                  </Box>
-                  <Box>
-                    <Text size="xs" c="dimmed" mb={4}>Limite de tokens</Text>
-                    <Text size="sm" fw={500}>{company.tokenLimit.toLocaleString("pt-BR")}</Text>
-                  </Box>
-                </Group>
-                <Button variant="light" leftSection={<IconPencil size={14} />} w="fit-content" onClick={openEdit}>
-                  Editar configurações
-                </Button>
-              </Stack>
-            </Card>
+            <Stack gap="md">
+              <Card padding="lg" radius="lg" withBorder shadow="sm">
+                <Stack gap="md">
+                  <Text fw={600} size="sm">Configurações da Empresa</Text>
+                  <Group grow>
+                    <Box>
+                      <Text size="xs" c="dimmed" mb={4}>Provedor de IA</Text>
+                      <Text size="sm" fw={500}>{company.aiProvider} · {company.aiModel}</Text>
+                    </Box>
+                    <Box>
+                      <Text size="xs" c="dimmed" mb={4}>Limite de usuários</Text>
+                      <Text size="sm" fw={500}>{company.userLimit}</Text>
+                    </Box>
+                    <Box>
+                      <Text size="xs" c="dimmed" mb={4}>Limite de tokens</Text>
+                      <Text size="sm" fw={500}>{company.tokenLimit.toLocaleString("pt-BR")}</Text>
+                    </Box>
+                  </Group>
+                  <Button variant="light" leftSection={<IconPencil size={14} />} w="fit-content" onClick={openEdit}>
+                    Editar configurações
+                  </Button>
+                </Stack>
+              </Card>
+
+              {/* 360dialog webhook registration */}
+              <Card padding="lg" radius="lg" withBorder shadow="sm">
+                <Stack gap="sm">
+                  <Text fw={600} size="sm">WhatsApp via 360dialog</Text>
+                  <Text size="xs" c="dimmed">
+                    Após a empresa salvar a API Key nas configurações dela, use o botão abaixo para registrar o webhook na 360dialog automaticamente.
+                  </Text>
+                  <RegisterWebhookButton companyId={company.id} companySlug={company.slug} />
+                </Stack>
+              </Card>
+            </Stack>
           </Tabs.Panel>
         </Tabs>
       </Stack>

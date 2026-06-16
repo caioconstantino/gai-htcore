@@ -137,6 +137,43 @@ companiesRouter.get("/:id/agents", async (req: AuthRequest, res, next) => {
   }
 });
 
+// Register (or update) the 360dialog webhook URL for a company
+companiesRouter.post("/:id/register-webhook", requireRole("super_admin"), async (req: AuthRequest, res, next) => {
+  try {
+    const company = await prisma.company.findUnique({
+      where: { id: req.params.id },
+      select: { slug: true, whatsappToken: true },
+    });
+    if (!company) { res.status(404).json({ error: "Empresa não encontrada" }); return; }
+    if (!company.whatsappToken) { res.status(422).json({ error: "Configure a 360dialog API Key antes de registrar o webhook" }); return; }
+
+    const baseUrl = (process.env.BACKEND_PUBLIC_URL ?? "").replace(/\/$/, "");
+    if (!baseUrl) { res.status(500).json({ error: "BACKEND_PUBLIC_URL não configurada no .env" }); return; }
+
+    const webhookUrl = `${baseUrl}/webhook/${company.slug}`;
+    const dialog360Base = (process.env.DIALOG_360_BASE_URL ?? "https://waba-sandbox.360dialog.io").replace(/\/$/, "");
+
+    const response = await fetch(`${dialog360Base}/v1/configs/webhook`, {
+      method: "POST",
+      headers: {
+        "D360-API-KEY": company.whatsappToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ url: webhookUrl }),
+    });
+
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      res.status(502).json({ error: "360dialog retornou erro", detail: body });
+      return;
+    }
+
+    res.json({ webhookUrl, dialog360Response: body });
+  } catch (err) {
+    next(err);
+  }
+});
+
 companiesRouter.get("/:id/stats", async (req: AuthRequest, res, next) => {
   try {
     const { id } = req.params;
