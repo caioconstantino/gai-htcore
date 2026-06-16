@@ -1,0 +1,267 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  directUrl         = env("DIRECT_URL")
+}
+
+// ─── EMPRESAS ────────────────────────────────────────────────────────────────
+
+model Company {
+  id                    String        @id @default(cuid())
+  name                  String
+  slug                  String        @unique
+  whatsappPhoneNumberId String?
+  whatsappToken         String?
+  aiProvider            String        @default("openai")
+  aiModel               String        @default("gpt-4o-mini")
+  tokenLimit            Int           @default(1000000)
+  tokensUsed            Int           @default(0)
+  userLimit             Int           @default(10)
+  isActive              Boolean       @default(true)
+  plan                  String        @default("trial")
+  logoUrl               String?
+  primaryColor          String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  users             User[]
+  agents            Agent[]
+  products          Product[]
+  leads             Lead[]
+  conversations     Conversation[]
+  messages          Message[]
+  quotes            Quote[]
+  commercialRules   CommercialRule?
+  tokenUsageLogs    TokenUsageLog[]
+
+  @@map("companies")
+}
+
+// ─── USUÁRIOS ────────────────────────────────────────────────────────────────
+
+model User {
+  id          String    @id @default(cuid())
+  companyId   String?
+  name        String
+  email       String    @unique
+  passwordHash String
+  role        String    @default("operator")
+  isActive    Boolean   @default(true)
+  tokensUsed  Int       @default(0)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  company       Company?       @relation(fields: [companyId], references: [id])
+  assignedLeads Lead[]         @relation("AssignedLeads")
+  messages      Message[]      @relation("SentMessages")
+
+  @@map("users")
+}
+
+// ─── AGENTES ────────────────────────────────────────────────────────────────
+
+model Agent {
+  id               String   @id @default(cuid())
+  companyId        String
+  name             String
+  description      String?
+  type             String   @default("commercial")
+  scope            String   @default("external")
+  prompt           String
+  promptVersion    Int      @default(1)
+  isActive         Boolean  @default(true)
+  triggerKeywords  String[] @default([])
+  requiredFields   String[] @default([])
+  followUpRules    Json     @default("[]")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company       Company        @relation(fields: [companyId], references: [id])
+  conversations Conversation[]
+  messages      Message[]
+
+  @@map("agents")
+}
+
+// ─── PRODUTOS / EQUIPAMENTOS ────────────────────────────────────────────────
+
+model Product {
+  id                   String   @id @default(cuid())
+  companyId            String
+  name                 String
+  category             String
+  description          String?
+  dailyPrice           Decimal  @db.Decimal(10, 2)
+  weeklyPrice          Decimal? @db.Decimal(10, 2)
+  monthlyPrice         Decimal? @db.Decimal(10, 2)
+  minimumDays          Int      @default(1)
+  freightCalculation   String   @default("by_equipment")
+  requiredInfoForQuote String[] @default([])
+  commonQuestions      String[] @default([])
+  isMostSold           Boolean  @default(false)
+  isHighRevenue        Boolean  @default(false)
+  isActive             Boolean  @default(true)
+  imageUrl             String?
+  documents            Json     @default("[]")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  quoteItems QuoteItem[]
+
+  @@map("products")
+}
+
+model CommercialRule {
+  id                  String   @id @default(cuid())
+  companyId           String   @unique
+  hasFixedPriceTable  Boolean  @default(true)
+  allowsDiscount      Boolean  @default(false)
+  maxDiscountPercent  Decimal  @default(0) @db.Decimal(5, 2)
+  paymentMethods      String[] @default([])
+  freightRules        String?
+  additionalRules     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("commercial_rules")
+}
+
+// ─── LEADS ───────────────────────────────────────────────────────────────────
+
+model Lead {
+  id                String    @id @default(cuid())
+  companyId         String
+  name              String?
+  companyName       String?
+  phone             String
+  source            String    @default("whatsapp")
+  stage             String    @default("new")
+  temperature       String    @default("warm")
+  currentAgentId    String?
+  assignedUserId    String?
+  context           Json      @default("{}")
+  lastInteractionAt DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  company       Company        @relation(fields: [companyId], references: [id])
+  assignedUser  User?          @relation("AssignedLeads", fields: [assignedUserId], references: [id])
+  conversations Conversation[]
+  quotes        Quote[]
+
+  @@unique([companyId, phone])
+  @@map("leads")
+}
+
+// ─── CONVERSAS ───────────────────────────────────────────────────────────────
+
+model Conversation {
+  id                 String   @id @default(cuid())
+  companyId          String
+  leadId             String
+  currentAgentId     String?
+  stage              String   @default("new")
+  context            Json     @default("{}")
+  isActive           Boolean  @default(true)
+  handedOffToHuman   Boolean  @default(false)
+  totalTokensUsed    Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  company      Company   @relation(fields: [companyId], references: [id])
+  lead         Lead      @relation(fields: [leadId], references: [id])
+  currentAgent Agent?    @relation(fields: [currentAgentId], references: [id])
+  messages     Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id                String   @id @default(cuid())
+  companyId         String
+  leadId            String
+  conversationId    String
+  direction         String
+  content           String
+  type              String   @default("text")
+  agentId           String?
+  sentByUserId      String?
+  whatsappMessageId String?
+  status            String   @default("pending")
+  tokensUsed        Int?
+  createdAt         DateTime @default(now())
+
+  company      Company       @relation(fields: [companyId], references: [id])
+  conversation Conversation  @relation(fields: [conversationId], references: [id])
+  agent        Agent?        @relation(fields: [agentId], references: [id])
+  sentByUser   User?         @relation("SentMessages", fields: [sentByUserId], references: [id])
+
+  @@map("messages")
+}
+
+// ─── ORÇAMENTOS ──────────────────────────────────────────────────────────────
+
+model Quote {
+  id               String      @id @default(cuid())
+  companyId        String
+  leadId           String
+  totalValue       Decimal     @db.Decimal(10, 2)
+  discountPercent  Decimal     @default(0) @db.Decimal(5, 2)
+  deliveryLocation String?
+  startDate        DateTime?
+  endDate          DateTime?
+  status           String      @default("draft")
+  pdfUrl           String?
+  notes            String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  company Company     @relation(fields: [companyId], references: [id])
+  lead    Lead        @relation(fields: [leadId], references: [id])
+  items   QuoteItem[]
+
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id          String  @id @default(cuid())
+  quoteId     String
+  productId   String
+  productName String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2)
+  totalPrice  Decimal @db.Decimal(10, 2)
+  periodDays  Int
+
+  quote   Quote   @relation(fields: [quoteId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("quote_items")
+}
+
+// ─── CONTROLE DE TOKENS ──────────────────────────────────────────────────────
+
+model TokenUsageLog {
+  id           String   @id @default(cuid())
+  companyId    String
+  userId       String?
+  agentId      String?
+  conversationId String?
+  tokensIn     Int
+  tokensOut    Int
+  totalTokens  Int
+  model        String
+  createdAt    DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("token_usage_logs")
+}

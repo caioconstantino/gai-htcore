@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"C:/Users/Usuario/.claude/projects/C--Users-Usuario-Downloads-htcore/memory\")",
+      "Bash(pnpm --version)",
+      "Bash(claude mcp *)",
+      "mcp__036f57f2-a225-434b-8243-11f5a7abd314__get_project_url",
+      "mcp__036f57f2-a225-434b-8243-11f5a7abd314__list_tables",
+      "PowerShell(Resolve-DnsName \"aws-0-us-east-1.pooler.supabase.com\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Resolve-DnsName \"db.kmymgcjxaowugypgbqfw.supabase.co\" -ErrorAction SilentlyContinue)",
+      "Bash(node test-pg.mjs)",
+      "Bash(node -e ' *)",
+      "Bash(Resolve-DnsName aws-0-us-east-1.pooler.supabase.com)",
+      "Bash(Select-Object -First 10)",
+      "Bash(Write-Host \"---\")",
+      "Bash(Resolve-DnsName db.kmymgcjxaowugypgbqfw.supabase.co)",
+      "Bash(docker compose *)",
+      "PowerShell(cd \"C:\\\\Users\\\\Usuario\\\\Downloads\\\\htcore\\\\apps\\\\web\"; Start-Process powershell -ArgumentList \"-NoExit\", \"-Command\", \"cd 'C:\\\\Users\\\\Usuario\\\\Downloads\\\\htcore\\\\apps\\\\web'; pnpm dev\" -WindowStyle Normal)",
+      "mcp__036f57f2-a225-434b-8243-11f5a7abd314__execute_sql",
+      "PowerShell(Start-Sleep -Seconds 15; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/login\" -TimeoutSec 10 -UseBasicParsing; \"Status: $\\($r.StatusCode\\)\" } catch { $_.Exception.Message })",
+      "PowerShell(try { Invoke-WebRequest -Uri \"http://localhost:3000\" -TimeoutSec 5 -UseBasicParsing | Select-Object StatusCode } catch { $_.Exception.Message })",
+      "Bash(node -e \"const pkg = require\\('./node_modules/@tabler/icons-react/package.json'\\); console.log\\(pkg.version\\)\")",
+      "Bash(node -e \"const pkg = require\\('C:/Users/Usuario/Downloads/htcore/apps/web/node_modules/@tabler/icons-react/package.json'\\); console.log\\(pkg.version\\)\")",
+      "Bash(gh auth *)",
+      "PowerShell($env:PATH += \";C:\\\\Program Files\\\\GitHub CLI\"; gh auth login --web --git-protocol https)"
+    ]
+  }
+}
