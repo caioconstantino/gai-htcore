@@ -23,7 +23,10 @@
       "Bash(node -e \"const pkg = require\\('C:/Users/Usuario/Downloads/htcore/apps/web/node_modules/@tabler/icons-react/package.json'\\); console.log\\(pkg.version\\)\")",
       "Bash(gh auth *)",
       "PowerShell($env:PATH += \";C:\\\\Program Files\\\\GitHub CLI\"; gh auth login --web --git-protocol https)",
-      "mcp__036f57f2-a225-434b-8243-11f5a7abd314__apply_migration"
+      "mcp__036f57f2-a225-434b-8243-11f5a7abd314__apply_migration",
+      "PowerShell($env:PATH += \";$env:LOCALAPPDATA\\\\Microsoft\\\\WinGet\\\\Packages\\\\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\"; ngrok version 2>&1)",
+      "PowerShell($env:PATH += \";$env:LOCALAPPDATA\\\\Microsoft\\\\WinGet\\\\Packages\\\\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\"; Start-Process -FilePath \"ngrok\" -ArgumentList \"http 3001\" -WindowStyle Hidden; Start-Sleep -Seconds 4; \\(Invoke-RestMethod http://localhost:4040/api/tunnels\\).tunnels | Where-Object { $_.proto -eq \"https\" } | Select-Object -ExpandProperty public_url)",
+      "PowerShell($ngrok = \"C:\\\\Users\\\\Usuario\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\ngrok.exe\"; & $ngrok update 2>&1)"
     ]
   }
 }
