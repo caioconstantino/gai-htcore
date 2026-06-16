@@ -143,9 +143,7 @@ async function main() {
     }
   }
 
-  console.log("\n  🎉 Pronto! O backend já pode receber mensagens WhatsApp.\n");
-  console.log("  ℹ️  Rode agora em outro terminal:");
-  console.log("     pnpm --filter backend dev\n");
+  console.log("\n  🎉 Webhooks registrados! Subindo serviços...\n");
 }
 
 main().catch((err) => {
