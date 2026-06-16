@@ -11,7 +11,7 @@ const createSchema = z.object({
   email: z.string().email().max(255),
   password: z.string().min(8).max(128),
   role: z.enum(["company_admin", "manager", "commercial", "operator"]),
-  companyId: z.string().uuid().optional(),
+  companyId: z.string().min(1).optional(),
 });
 
 const createSuperAdminSchema = createSchema.extend({
