@@ -1,38 +1,37 @@
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { prisma } from "../lib/prisma.js";
 
-export interface AuthRequest extends Request {
-  user?: { id: string; role: string; companyId?: string };
+export interface JwtPayload {
+  userId: string;
+  role: string;
+  companyId?: string;
 }
 
-export async function authenticate(
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  const token = req.headers.authorization?.replace("Bearer ", "");
+export interface AuthRequest extends Request {
+  user?: JwtPayload;
+}
 
-  if (!token) {
+function jwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error("JWT_SECRET is not configured");
+  return secret;
+}
+
+export function authenticate(req: AuthRequest, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
     res.status(401).json({ error: "Token não fornecido" });
     return;
   }
 
+  const token = header.slice(7);
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET ?? "") as {
-      userId: string;
-    };
-
-    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
-    if (!user || !user.isActive) {
-      res.status(401).json({ error: "Usuário inativo ou não encontrado" });
-      return;
-    }
-
-    req.user = { id: user.id, role: user.role, companyId: user.companyId ?? undefined };
+    const payload = jwt.verify(token, jwtSecret()) as JwtPayload;
+    req.user = payload;
     next();
-  } catch {
-    res.status(401).json({ error: "Token inválido" });
+  } catch (err) {
+    // Let errorHandler classify TokenExpiredError vs JsonWebTokenError
+    next(err);
   }
 }
 
@@ -44,4 +43,8 @@ export function requireRole(...roles: string[]) {
     }
     next();
   };
+}
+
+export function issueToken(payload: JwtPayload): string {
+  return jwt.sign(payload, jwtSecret(), { expiresIn: "7d" });
 }

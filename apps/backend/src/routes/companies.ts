@@ -6,114 +6,160 @@ import { z } from "zod";
 export const companiesRouter: ExpressRouter = Router();
 
 const createSchema = z.object({
-  name: z.string().min(2),
-  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
+  name: z.string().min(2).max(200),
+  slug: z.string().min(2).max(100).regex(/^[a-z0-9-]+$/, "Slug: apenas letras minúsculas, números e hífens"),
   plan: z.enum(["trial", "basic", "pro", "enterprise"]).default("trial"),
-  tokenLimit: z.number().int().default(1000000),
-  userLimit: z.number().int().default(10),
+  tokenLimit: z.number().int().min(0).default(1_000_000),
+  userLimit: z.number().int().min(1).default(10),
 });
 
 const updateSchema = z.object({
-  name: z.string().min(2).optional(),
+  name: z.string().min(2).max(200).optional(),
   plan: z.enum(["trial", "basic", "pro", "enterprise"]).optional(),
   isActive: z.boolean().optional(),
-  tokenLimit: z.number().int().optional(),
-  userLimit: z.number().int().optional(),
-  whatsappPhoneNumberId: z.string().optional(),
-  whatsappToken: z.string().optional(),
-  aiProvider: z.string().optional(),
-  aiModel: z.string().optional(),
-  primaryColor: z.string().optional(),
+  tokenLimit: z.number().int().min(0).optional(),
+  userLimit: z.number().int().min(1).optional(),
+  whatsappPhoneNumberId: z.string().max(50).optional(),
+  whatsappToken: z.string().max(512).optional(),
+  aiProvider: z.string().max(50).optional(),
+  aiModel: z.string().max(100).optional(),
+  primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
 });
 
-companiesRouter.get("/", requireRole("super_admin"), async (_req, res) => {
-  const companies = await prisma.company.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      _count: { select: { users: true, leads: true, conversations: true, agents: true } },
-    },
-  });
-  res.json({ data: companies, total: companies.length });
-});
+companiesRouter.get("/", requireRole("super_admin"), async (req, res, next) => {
+  try {
+    const page = Math.max(1, parseInt(String(req.query.page ?? 1)));
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? 50))));
+    const skip = (page - 1) * limit;
+    const search = req.query.search ? String(req.query.search) : undefined;
 
-companiesRouter.post("/", requireRole("super_admin"), async (req, res) => {
-  const parsed = createSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
-  const company = await prisma.company.create({ data: parsed.data });
-  res.status(201).json(company);
-});
+    const where = search ? { name: { contains: search, mode: "insensitive" as const } } : {};
 
-companiesRouter.get("/:id", async (req: AuthRequest, res) => {
-  const { id } = req.params;
-  if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
-    res.status(403).json({ error: "Acesso negado" }); return;
+    const [companies, total] = await Promise.all([
+      prisma.company.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+        include: {
+          _count: { select: { users: true, leads: true, conversations: true, agents: true } },
+        },
+      }),
+      prisma.company.count({ where }),
+    ]);
+
+    res.json({ data: companies, total, page, limit });
+  } catch (err) {
+    next(err);
   }
-  const company = await prisma.company.findUnique({
-    where: { id },
-    include: {
-      commercialRules: true,
-      _count: { select: { users: true, leads: true, conversations: true, agents: true, products: true, quotes: true } },
-    },
-  });
-  if (!company) { res.status(404).json({ error: "Empresa não encontrada" }); return; }
-  res.json(company);
 });
 
-companiesRouter.patch("/:id", async (req: AuthRequest, res) => {
-  const { id } = req.params;
-  if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
-    res.status(403).json({ error: "Acesso negado" }); return;
+companiesRouter.post("/", requireRole("super_admin"), async (req, res, next) => {
+  try {
+    const parsed = createSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+    const company = await prisma.company.create({ data: parsed.data });
+    res.status(201).json(company);
+  } catch (err) {
+    next(err);
   }
-  const parsed = updateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
-  const company = await prisma.company.update({ where: { id }, data: parsed.data });
-  res.json(company);
 });
 
-companiesRouter.get("/:id/users", async (req: AuthRequest, res) => {
-  const { id } = req.params;
-  if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
-    res.status(403).json({ error: "Acesso negado" }); return;
+companiesRouter.get("/:id", async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    const company = await prisma.company.findUnique({
+      where: { id },
+      include: {
+        commercialRules: true,
+        _count: { select: { users: true, leads: true, conversations: true, agents: true, products: true, quotes: true } },
+      },
+    });
+    if (!company) { res.status(404).json({ error: "Empresa não encontrada" }); return; }
+
+    // Never expose the WhatsApp token in responses
+    const { whatsappToken: _t, ...safe } = company as typeof company & { whatsappToken?: string };
+    res.json(safe);
+  } catch (err) {
+    next(err);
   }
-  const users = await prisma.user.findMany({
-    where: { companyId: id },
-    select: { id: true, name: true, email: true, role: true, isActive: true, lastLoginAt: true, tokensUsed: true, createdAt: true },
-    orderBy: { createdAt: "desc" },
-  });
-  res.json({ data: users, total: users.length });
 });
 
-companiesRouter.get("/:id/agents", async (req: AuthRequest, res) => {
-  const { id } = req.params;
-  if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
-    res.status(403).json({ error: "Acesso negado" }); return;
+companiesRouter.patch("/:id", async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    const parsed = updateSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+    const company = await prisma.company.update({ where: { id }, data: parsed.data });
+    const { whatsappToken: _t, ...safe } = company as typeof company & { whatsappToken?: string };
+    res.json(safe);
+  } catch (err) {
+    next(err);
   }
-  const agents = await prisma.agent.findMany({
-    where: { companyId: id },
-    orderBy: { createdAt: "desc" },
-  });
-  res.json({ data: agents, total: agents.length });
 });
 
-companiesRouter.get("/:id/stats", async (req: AuthRequest, res) => {
-  const { id } = req.params;
-  if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
-    res.status(403).json({ error: "Acesso negado" }); return;
+companiesRouter.get("/:id/users", async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    const users = await prisma.user.findMany({
+      where: { companyId: id },
+      select: { id: true, name: true, email: true, role: true, isActive: true, lastLoginAt: true, tokensUsed: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ data: users, total: users.length });
+  } catch (err) {
+    next(err);
   }
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+});
 
-  const [totalLeads, hotLeads, activeConversations, totalQuotes, leadsByStage, tokenLogs] = await Promise.all([
-    prisma.lead.count({ where: { companyId: id } }),
-    prisma.lead.count({ where: { companyId: id, temperature: "hot" } }),
-    prisma.conversation.count({ where: { companyId: id, isActive: true } }),
-    prisma.quote.count({ where: { companyId: id } }),
-    prisma.lead.groupBy({ by: ["stage"], where: { companyId: id }, _count: true }),
-    prisma.tokenUsageLog.aggregate({
-      where: { companyId: id, createdAt: { gte: thirtyDaysAgo } },
-      _sum: { totalTokens: true },
-    }),
-  ]);
+companiesRouter.get("/:id/agents", async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    const agents = await prisma.agent.findMany({
+      where: { companyId: id },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ data: agents, total: agents.length });
+  } catch (err) {
+    next(err);
+  }
+});
 
-  res.json({ totalLeads, hotLeads, activeConversations, totalQuotes, leadsByStage, tokensLast30Days: tokenLogs._sum.totalTokens ?? 0 });
+companiesRouter.get("/:id/stats", async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    if (req.user?.role !== "super_admin" && req.user?.companyId !== id) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [totalLeads, hotLeads, activeConversations, totalQuotes, leadsByStage, tokenLogs] = await Promise.all([
+      prisma.lead.count({ where: { companyId: id } }),
+      prisma.lead.count({ where: { companyId: id, temperature: "hot" } }),
+      prisma.conversation.count({ where: { companyId: id, isActive: true } }),
+      prisma.quote.count({ where: { companyId: id } }),
+      prisma.lead.groupBy({ by: ["stage"], where: { companyId: id }, _count: true }),
+      prisma.tokenUsageLog.aggregate({
+        where: { companyId: id, createdAt: { gte: thirtyDaysAgo } },
+        _sum: { totalTokens: true },
+      }),
+    ]);
+
+    res.json({ totalLeads, hotLeads, activeConversations, totalQuotes, leadsByStage, tokensLast30Days: tokenLogs._sum.totalTokens ?? 0 });
+  } catch (err) {
+    next(err);
+  }
 });
