@@ -134,13 +134,18 @@ model Product {
   @@map("products")
 }
 
-// Seleção de produtos globais por empresa
+// Seleção de produtos globais por empresa — inclui preços próprios da empresa
 model CompanyProduct {
-  id        String   @id @default(cuid())
-  companyId String
-  productId String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  companyId    String
+  productId    String
+  isActive     Boolean  @default(true)
+  // Preços praticados pela empresa (sobrescrevem os preços de referência do catálogo global)
+  dailyPrice   Decimal? @db.Decimal(10, 2)
+  weeklyPrice  Decimal? @db.Decimal(10, 2)
+  monthlyPrice Decimal? @db.Decimal(10, 2)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   company Company @relation(fields: [companyId], references: [id])
   product Product @relation(fields: [productId], references: [id])

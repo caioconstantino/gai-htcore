@@ -105,8 +105,21 @@ globalProductsRouter.get("/my-products", async (req: AuthRequest, res, next) => 
       include: { product: true },
       orderBy: { product: { name: "asc" } },
     });
-    res.json({ data: items.map((i) => i.product), total: items.length });
+    // Retorna o produto com os preços específicos da empresa sobrescrevendo os de referência
+    const data = items.map((i) => ({
+      ...i.product,
+      companyDailyPrice: i.dailyPrice,
+      companyWeeklyPrice: i.weeklyPrice,
+      companyMonthlyPrice: i.monthlyPrice,
+    }));
+    res.json({ data, total: data.length });
   } catch (err) { next(err); }
+});
+
+const priceSchema = z.object({
+  dailyPrice: z.number().min(0).nullable().optional(),
+  weeklyPrice: z.number().min(0).nullable().optional(),
+  monthlyPrice: z.number().min(0).nullable().optional(),
 });
 
 globalProductsRouter.post("/select/:productId", async (req: AuthRequest, res, next) => {
@@ -117,12 +130,34 @@ globalProductsRouter.post("/select/:productId", async (req: AuthRequest, res, ne
     const product = await prisma.product.findUnique({ where: { id: req.params.productId, isGlobal: true, isActive: true } });
     if (!product) { res.status(404).json({ error: "Produto não encontrado no catálogo global" }); return; }
 
+    const parsed = priceSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+
     const cp = await prisma.companyProduct.upsert({
       where: { companyId_productId: { companyId, productId: req.params.productId } },
-      create: { companyId, productId: req.params.productId, isActive: true },
-      update: { isActive: true },
+      create: { companyId, productId: req.params.productId, isActive: true, ...parsed.data },
+      update: { isActive: true, ...parsed.data },
+      include: { product: true },
     });
     res.status(201).json(cp);
+  } catch (err) { next(err); }
+});
+
+// Atualizar apenas os preços de um produto já selecionado
+globalProductsRouter.patch("/select/:productId", async (req: AuthRequest, res, next) => {
+  try {
+    const companyId = req.user?.companyId;
+    if (!companyId) { res.status(403).json({ error: "Apenas empresas" }); return; }
+
+    const parsed = priceSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+
+    const cp = await prisma.companyProduct.update({
+      where: { companyId_productId: { companyId, productId: req.params.productId } },
+      data: parsed.data,
+      include: { product: true },
+    });
+    res.json(cp);
   } catch (err) { next(err); }
 });
 

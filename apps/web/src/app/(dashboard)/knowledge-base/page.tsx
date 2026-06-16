@@ -4,14 +4,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, Skeleton, Tabs,
-  ThemeIcon, Modal, TextInput, Textarea, ActionIcon, Menu, NumberInput,
-  Select, Table, Divider,
+  Modal, TextInput, Textarea, ActionIcon, Menu, NumberInput,
+  Select, Table, Divider, Switch,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import {
   IconBook2, IconPlus, IconPackage, IconDots, IconPencil, IconTrash,
-  IconCheck, IconX, IconAlertCircle,
+  IconCheck, IconX, IconAlertCircle, IconSearch,
 } from "@tabler/icons-react";
 
 interface GlobalProduct {
@@ -74,13 +74,24 @@ function ProductModal({ opened, onClose, product }: { opened: boolean; onClose: 
             <TextInput label="Nome" required {...form.getInputProps("name")} />
             <Select label="Categoria" data={categoryOptions} required {...form.getInputProps("category")} />
           </Group>
-          <Textarea label="Descrição" minRows={3} {...form.getInputProps("description")} />
+          <Textarea label="Descrição" minRows={3} placeholder="Descreva o produto, usos, especificações..." {...form.getInputProps("description")} />
+
+          <Divider label="Preços de referência (base para as empresas)" labelPosition="center" />
+          <Text size="xs" c="dimmed">Estes são preços de referência do mercado. Cada empresa informa seus próprios preços ao selecionar o produto.</Text>
+
           <Group grow>
-            <NumberInput label="Diária (R$)" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} required {...form.getInputProps("dailyPrice")} />
-            <NumberInput label="Semanal (R$)" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} {...form.getInputProps("weeklyPrice")} />
-            <NumberInput label="Mensal (R$)" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} {...form.getInputProps("monthlyPrice")} />
+            <NumberInput label="Diária (R$)" description="Obrigatório" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} required {...form.getInputProps("dailyPrice")} />
+            <NumberInput label="Semanal (R$)" description="Opcional" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} {...form.getInputProps("weeklyPrice")} />
+            <NumberInput label="Mensal (R$)" description="Opcional" prefix="R$ " decimalSeparator="," thousandSeparator="." decimalScale={2} min={0} {...form.getInputProps("monthlyPrice")} />
           </Group>
-          <Group justify="flex-end">
+
+          <Divider label="Classificações" labelPosition="center" />
+          <Group>
+            <Switch label="Mais alugado" description="Aparece em destaque nas sugestões da IA" {...form.getInputProps("isMostSold", { type: "checkbox" })} />
+            <Switch label="Alta receita" description="Produto de ticket alto" {...form.getInputProps("isHighRevenue", { type: "checkbox" })} />
+          </Group>
+
+          <Group justify="flex-end" mt="xs">
             <Button variant="subtle" onClick={onClose}>Cancelar</Button>
             <Button type="submit" loading={mutation.isPending}>{isEdit ? "Salvar" : "Criar"}</Button>
           </Group>
@@ -95,6 +106,8 @@ export default function KnowledgeBasePage() {
   const [editing, setEditing] = useState<GlobalProduct | undefined>();
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const qc = useQueryClient();
 
   const { data: productsData, isLoading: loadingProducts } = useQuery<{ data: GlobalProduct[] }>({
@@ -118,51 +131,90 @@ export default function KnowledgeBasePage() {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["product-suggestions"] });
       qc.invalidateQueries({ queryKey: ["global-products"] });
-      notifications.show({ message: vars.status === "approved" ? "Sugestão aprovada e produto criado no catálogo!" : "Sugestão rejeitada", color: vars.status === "approved" ? "green" : "orange" });
+      notifications.show({
+        message: vars.status === "approved" ? "Produto aprovado e adicionado ao catálogo!" : "Sugestão rejeitada",
+        color: vars.status === "approved" ? "green" : "orange",
+      });
       setReviewId(null); setReviewNote("");
     },
   });
 
-  const products = productsData?.data ?? [];
+  const allProducts = productsData?.data ?? [];
   const suggestions = suggestionsData?.data ?? [];
   const pending = suggestions.filter((s) => s.status === "pending");
+
+  const products = allProducts.filter((p) => {
+    const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase());
+    const matchCat = !categoryFilter || p.category === categoryFilter;
+    return matchSearch && matchCat;
+  });
+
+  const categories = Array.from(new Set(allProducts.map((p) => p.category))).sort();
 
   return (
     <Stack gap="lg" maw={1200}>
       <Group justify="space-between" align="flex-end">
         <Box>
           <Title order={2} fw={700}>Biblioteca de Inteligência</Title>
-          <Text c="dimmed" size="sm" mt={4}>Catálogo global de produtos e gestão de sugestões</Text>
+          <Text c="dimmed" size="sm" mt={4}>Catálogo global de produtos — preços de referência para as empresas</Text>
         </Box>
       </Group>
 
-      <ProductModal opened={modalOpen} onClose={() => setModalOpen(false)} product={editing} />
+      <ProductModal
+        opened={modalOpen}
+        onClose={() => { setModalOpen(false); setEditing(undefined); }}
+        product={editing}
+      />
 
       <Tabs defaultValue="catalog">
         <Tabs.List mb="md">
           <Tabs.Tab value="catalog" leftSection={<IconPackage size={16} />}>
-            Catálogo Global ({products.length})
+            Catálogo Global ({allProducts.length})
           </Tabs.Tab>
           <Tabs.Tab value="suggestions" leftSection={<IconAlertCircle size={16} />}>
-            Sugestões Pendentes
+            Sugestões das Empresas
             {pending.length > 0 && <Badge size="xs" color="orange" ml={6}>{pending.length}</Badge>}
           </Tabs.Tab>
         </Tabs.List>
 
-        {/* ── Catalog tab ── */}
+        {/* ── Catálogo tab ── */}
         <Tabs.Panel value="catalog">
           <Stack gap="md">
-            <Group justify="flex-end">
-              <Button leftSection={<IconPlus size={16} />} size="sm" onClick={() => { setEditing(undefined); setModalOpen(true); }}>Adicionar produto</Button>
+            <Group justify="space-between">
+              <Group gap="sm">
+                <TextInput
+                  placeholder="Buscar produto..."
+                  leftSection={<IconSearch size={14} />}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  w={220}
+                  size="sm"
+                />
+                <Select
+                  placeholder="Filtrar categoria"
+                  data={categories}
+                  value={categoryFilter}
+                  onChange={setCategoryFilter}
+                  clearable
+                  size="sm"
+                  w={200}
+                />
+              </Group>
+              <Button leftSection={<IconPlus size={16} />} size="sm" onClick={() => { setEditing(undefined); setModalOpen(true); }}>
+                Novo produto
+              </Button>
             </Group>
+
             {loadingProducts ? (
               <Stack gap="sm">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} height={52} radius="lg" />)}</Stack>
             ) : products.length === 0 ? (
               <Card padding="xl" radius="lg" withBorder style={{ borderStyle: "dashed" }}>
                 <Stack align="center" py="xl" gap="sm">
                   <IconBook2 size={40} color="var(--mantine-color-gray-3)" />
-                  <Text c="dimmed">Catálogo vazio</Text>
-                  <Button variant="light" size="sm" leftSection={<IconPlus size={14} />} onClick={() => { setEditing(undefined); setModalOpen(true); }}>Adicionar primeiro produto</Button>
+                  <Text c="dimmed">{search || categoryFilter ? "Nenhum produto encontrado" : "Catálogo vazio"}</Text>
+                  {!search && !categoryFilter && (
+                    <Button variant="light" size="sm" leftSection={<IconPlus size={14} />} onClick={() => { setEditing(undefined); setModalOpen(true); }}>Adicionar primeiro produto</Button>
+                  )}
                 </Stack>
               </Card>
             ) : (
@@ -172,9 +224,9 @@ export default function KnowledgeBasePage() {
                     <Table.Tr>
                       <Table.Th>Produto</Table.Th>
                       <Table.Th>Categoria</Table.Th>
-                      <Table.Th ta="right">Diária</Table.Th>
-                      <Table.Th ta="right">Semanal</Table.Th>
-                      <Table.Th ta="right">Mensal</Table.Th>
+                      <Table.Th ta="right">Ref. Diária</Table.Th>
+                      <Table.Th ta="right">Ref. Semanal</Table.Th>
+                      <Table.Th ta="right">Ref. Mensal</Table.Th>
                       <Table.Th w={80}></Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -182,7 +234,11 @@ export default function KnowledgeBasePage() {
                     {products.map((p) => (
                       <Table.Tr key={p.id}>
                         <Table.Td>
-                          <Text size="sm" fw={500}>{p.name}</Text>
+                          <Group gap="xs">
+                            <Text size="sm" fw={500}>{p.name}</Text>
+                            {p.isMostSold && <Badge size="xs" color="blue" variant="light">+ alugado</Badge>}
+                            {p.isHighRevenue && <Badge size="xs" color="orange" variant="light">alta receita</Badge>}
+                          </Group>
                           {p.description && <Text size="xs" c="dimmed" lineClamp={1}>{p.description}</Text>}
                         </Table.Td>
                         <Table.Td><Badge variant="outline" color="gray" size="xs">{p.category}</Badge></Table.Td>
@@ -207,7 +263,7 @@ export default function KnowledgeBasePage() {
           </Stack>
         </Tabs.Panel>
 
-        {/* ── Suggestions tab ── */}
+        {/* ── Sugestões tab ── */}
         <Tabs.Panel value="suggestions">
           {loadingSuggestions ? (
             <Stack gap="sm">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={100} radius="lg" />)}</Stack>
@@ -235,27 +291,38 @@ export default function KnowledgeBasePage() {
                           {s.status === "approved" ? "Aprovado" : s.status === "rejected" ? "Rejeitado" : "Pendente"}
                         </Badge>
                       </Group>
-                      <Text size="xs" c="dimmed">Sugerido por <b>{s.company.name}</b> em {new Date(s.createdAt).toLocaleDateString("pt-BR")}</Text>
+                      <Text size="xs" c="dimmed">
+                        Sugerido por <b>{s.company.name}</b> em {new Date(s.createdAt).toLocaleDateString("pt-BR")}
+                      </Text>
                     </Box>
-                    <Group gap="xs" ta="right">
-                      <Box>
-                        <Text size="xs" c="dimmed">Diária</Text>
-                        <Text size="sm" fw={600}>{fmt(s.dailyPrice)}</Text>
-                      </Box>
-                    </Group>
+                    <Box ta="right">
+                      <Text size="xs" c="dimmed">Preço sugerido</Text>
+                      <Text size="sm" fw={600}>{fmt(s.dailyPrice)}/dia</Text>
+                    </Box>
                   </Group>
+
                   {s.description && <Text size="xs" c="dimmed" mb="sm">{s.description}</Text>}
+
+                  <Group gap="xl" mb={s.status === "pending" ? "sm" : 0}>
+                    {s.weeklyPrice && <Box><Text size="xs" c="dimmed">Semanal</Text><Text size="sm">{fmt(s.weeklyPrice)}</Text></Box>}
+                    {s.monthlyPrice && <Box><Text size="xs" c="dimmed">Mensal</Text><Text size="sm">{fmt(s.monthlyPrice)}</Text></Box>}
+                  </Group>
 
                   {s.status === "pending" && (
                     <>
                       {reviewId === s.id ? (
                         <Stack gap="xs" mt="sm">
-                          <TextInput size="xs" placeholder="Nota de revisão (opcional)" value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} />
+                          <TextInput
+                            size="xs"
+                            placeholder="Nota de revisão (opcional — empresa verá esta mensagem)"
+                            value={reviewNote}
+                            onChange={(e) => setReviewNote(e.target.value)}
+                          />
                           <Group gap="xs">
                             <Button size="xs" color="green" leftSection={<IconCheck size={12} />}
                               loading={reviewMutation.isPending}
                               onClick={() => reviewMutation.mutate({ id: s.id, status: "approved" })}>
-                              Aprovar e criar no catálogo
+                              Aprovar e adicionar ao catálogo
                             </Button>
                             <Button size="xs" color="red" variant="light" leftSection={<IconX size={12} />}
                               loading={reviewMutation.isPending}
@@ -266,11 +333,15 @@ export default function KnowledgeBasePage() {
                           </Group>
                         </Stack>
                       ) : (
-                        <Button size="xs" variant="light" mt="xs" onClick={() => setReviewId(s.id)}>Revisar sugestão</Button>
+                        <Button size="xs" variant="light" mt="xs" onClick={() => setReviewId(s.id)}>
+                          Revisar sugestão
+                        </Button>
                       )}
                     </>
                   )}
-                  {s.reviewNote && <Text size="xs" c="dimmed" mt="xs">Nota: {s.reviewNote}</Text>}
+                  {s.reviewNote && (
+                    <Text size="xs" c="dimmed" mt="xs" fs="italic">Nota: {s.reviewNote}</Text>
+                  )}
                 </Card>
               ))}
             </Stack>

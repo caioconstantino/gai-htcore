@@ -5,11 +5,13 @@ import { api } from "@/lib/api";
 import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, Skeleton, Tabs,
   Modal, TextInput, Textarea, NumberInput, Select, Table, ActionIcon, Tooltip,
+  Divider,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import {
   IconPackage, IconPlus, IconCheck, IconX, IconAlertCircle, IconShoppingCart,
+  IconPencil,
 } from "@tabler/icons-react";
 
 interface GlobalProduct {
@@ -18,16 +20,129 @@ interface GlobalProduct {
   selectedByCompany?: boolean; companyProductActive?: boolean;
 }
 
+interface MyProduct extends GlobalProduct {
+  companyDailyPrice: string | null;
+  companyWeeklyPrice: string | null;
+  companyMonthlyPrice: string | null;
+}
+
 const categoryOptions = [
   "Máquinas de Terraplanagem", "Equipamentos de Elevação", "Compactadores", "Geradores",
   "Ferramentas", "Plataformas", "Compressores", "Iluminação", "Outros",
 ];
 
-function fmt(v: string | null) {
+function fmt(v: string | null | undefined) {
   if (!v) return "—";
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v));
 }
 
+// ── Modal de seleção com preços próprios ──────────────────────────
+function SelectProductModal({
+  product,
+  existingPrices,
+  onClose,
+}: {
+  product: GlobalProduct;
+  existingPrices?: { daily: string | null; weekly: string | null; monthly: string | null };
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const isEdit = !!existingPrices;
+
+  const form = useForm({
+    initialValues: {
+      dailyPrice: existingPrices?.daily ? Number(existingPrices.daily) : null as number | null,
+      weeklyPrice: existingPrices?.weekly ? Number(existingPrices.weekly) : null as number | null,
+      monthlyPrice: existingPrices?.monthly ? Number(existingPrices.monthly) : null as number | null,
+    },
+  });
+
+  const mutation = useMutation({
+    mutationFn: (v: typeof form.values) =>
+      isEdit
+        ? api.patch(`/global-products/select/${product.id}`, v).then((r) => r.data)
+        : api.post(`/global-products/select/${product.id}`, v).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["global-products"] });
+      qc.invalidateQueries({ queryKey: ["my-products"] });
+      notifications.show({
+        message: isEdit ? "Preços atualizados!" : `"${product.name}" adicionado aos seus produtos!`,
+        color: "green",
+      });
+      onClose();
+    },
+    onError: () => notifications.show({ message: "Erro ao salvar produto", color: "red" }),
+  });
+
+  return (
+    <Modal
+      opened
+      onClose={onClose}
+      title={isEdit ? `Editar preços — ${product.name}` : `Adicionar ${product.name}`}
+      size="md"
+      radius="lg"
+    >
+      <Stack gap="md">
+        <Card padding="sm" radius="md" bg="var(--mantine-color-gray-0)" withBorder={false}>
+          <Text size="xs" c="dimmed" fw={500} mb={4}>Preços de referência do catálogo global</Text>
+          <Group gap="xl">
+            <Box><Text size="xs" c="dimmed">Diária</Text><Text size="sm" fw={600}>{fmt(product.dailyPrice)}</Text></Box>
+            {product.weeklyPrice && <Box><Text size="xs" c="dimmed">Semanal</Text><Text size="sm" fw={600}>{fmt(product.weeklyPrice)}</Text></Box>}
+            {product.monthlyPrice && <Box><Text size="xs" c="dimmed">Mensal</Text><Text size="sm" fw={600}>{fmt(product.monthlyPrice)}</Text></Box>}
+          </Group>
+        </Card>
+
+        <Divider label="Informe os preços que sua empresa pratica" labelPosition="center" />
+
+        <form onSubmit={form.onSubmit((v) => mutation.mutate(v))}>
+          <Stack gap="md">
+            <NumberInput
+              label="Diária (R$)"
+              description="Obrigatório"
+              prefix="R$ "
+              decimalSeparator=","
+              thousandSeparator="."
+              decimalScale={2}
+              min={0}
+              required
+              {...form.getInputProps("dailyPrice")}
+            />
+            <Group grow>
+              <NumberInput
+                label="Semanal (R$)"
+                description="Opcional"
+                prefix="R$ "
+                decimalSeparator=","
+                thousandSeparator="."
+                decimalScale={2}
+                min={0}
+                {...form.getInputProps("weeklyPrice")}
+              />
+              <NumberInput
+                label="Mensal (R$)"
+                description="Opcional"
+                prefix="R$ "
+                decimalSeparator=","
+                thousandSeparator="."
+                decimalScale={2}
+                min={0}
+                {...form.getInputProps("monthlyPrice")}
+              />
+            </Group>
+            <Group justify="flex-end" mt="xs">
+              <Button variant="subtle" onClick={onClose}>Cancelar</Button>
+              <Button type="submit" leftSection={<IconCheck size={16} />} loading={mutation.isPending}>
+                {isEdit ? "Salvar preços" : "Adicionar produto"}
+              </Button>
+            </Group>
+          </Stack>
+        </form>
+      </Stack>
+    </Modal>
+  );
+}
+
+// ── Modal de sugestão ─────────────────────────────────────────────
 function SuggestModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const form = useForm({
@@ -74,8 +189,11 @@ function SuggestModal({ opened, onClose }: { opened: boolean; onClose: () => voi
   );
 }
 
+// ── Página principal ──────────────────────────────────────────────
 export default function ProductsPage() {
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [selecting, setSelecting] = useState<GlobalProduct | null>(null);
+  const [editing, setEditing] = useState<MyProduct | null>(null);
   const qc = useQueryClient();
 
   const { data: catalogData, isLoading: loadingCatalog } = useQuery<{ data: GlobalProduct[] }>({
@@ -83,7 +201,7 @@ export default function ProductsPage() {
     queryFn: () => api.get("/global-products").then((r) => r.data),
   });
 
-  const { data: myProductsData, isLoading: loadingMy } = useQuery<{ data: GlobalProduct[] }>({
+  const { data: myProductsData, isLoading: loadingMy } = useQuery<{ data: MyProduct[] }>({
     queryKey: ["my-products"],
     queryFn: () => api.get("/global-products/my-products").then((r) => r.data),
   });
@@ -93,15 +211,13 @@ export default function ProductsPage() {
     queryFn: () => api.get("/global-products/suggestions").then((r) => r.data),
   });
 
-  const selectMutation = useMutation({
-    mutationFn: (productId: string) => api.post(`/global-products/select/${productId}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["global-products"] }); qc.invalidateQueries({ queryKey: ["my-products"] }); },
-    onError: () => notifications.show({ message: "Erro ao selecionar produto", color: "red" }),
-  });
-
   const deselectMutation = useMutation({
     mutationFn: (productId: string) => api.delete(`/global-products/select/${productId}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["global-products"] }); qc.invalidateQueries({ queryKey: ["my-products"] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["global-products"] });
+      qc.invalidateQueries({ queryKey: ["my-products"] });
+      notifications.show({ message: "Produto removido", color: "orange" });
+    },
     onError: () => notifications.show({ message: "Erro ao remover produto", color: "red" }),
   });
 
@@ -112,10 +228,28 @@ export default function ProductsPage() {
 
   return (
     <Stack gap="lg" maw={1200}>
+      {/* Modals */}
+      {selecting && (
+        <SelectProductModal product={selecting} onClose={() => setSelecting(null)} />
+      )}
+      {editing && (
+        <SelectProductModal
+          product={editing}
+          existingPrices={{
+            daily: editing.companyDailyPrice,
+            weekly: editing.companyWeeklyPrice,
+            monthly: editing.companyMonthlyPrice,
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+
       <Group justify="space-between" align="flex-end">
         <Box>
           <Title order={2} fw={700}>Produtos</Title>
-          <Text c="dimmed" size="sm" mt={4}>Selecione os produtos que sua empresa trabalha no catálogo global</Text>
+          <Text c="dimmed" size="sm" mt={4}>
+            Selecione os produtos do catálogo e informe seus preços de locação
+          </Text>
         </Box>
         <Button variant="light" leftSection={<IconAlertCircle size={16} />} onClick={() => setSuggestOpen(true)}>
           Sugerir produto
@@ -140,7 +274,7 @@ export default function ProductsPage() {
           </Tabs.Tab>
         </Tabs.List>
 
-        {/* ── Global catalog ── */}
+        {/* ── Catálogo global ── */}
         <Tabs.Panel value="catalog">
           {loadingCatalog ? (
             <Stack gap="sm">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={52} radius="lg" />)}</Stack>
@@ -149,7 +283,6 @@ export default function ProductsPage() {
               <Stack align="center" py="xl" gap="sm">
                 <IconPackage size={40} color="var(--mantine-color-gray-3)" />
                 <Text c="dimmed">Catálogo ainda vazio</Text>
-                <Text size="sm" c="dimmed">Aguarde o administrador adicionar produtos ou sugira um</Text>
                 <Button variant="light" size="sm" leftSection={<IconPlus size={14} />} onClick={() => setSuggestOpen(true)}>Sugerir produto</Button>
               </Stack>
             </Card>
@@ -160,37 +293,40 @@ export default function ProductsPage() {
                   <Table.Tr>
                     <Table.Th>Produto</Table.Th>
                     <Table.Th>Categoria</Table.Th>
-                    <Table.Th ta="right">Diária</Table.Th>
-                    <Table.Th ta="right">Semanal</Table.Th>
-                    <Table.Th ta="right">Mensal</Table.Th>
-                    <Table.Th w={120} ta="center">Selecionado</Table.Th>
+                    <Table.Th ta="right">Ref. Diária</Table.Th>
+                    <Table.Th ta="right">Ref. Semanal</Table.Th>
+                    <Table.Th ta="right">Ref. Mensal</Table.Th>
+                    <Table.Th w={120} ta="center">Ação</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {catalog.map((p) => (
                     <Table.Tr key={p.id} bg={p.companyProductActive ? "var(--mantine-color-green-0)" : undefined}>
                       <Table.Td>
-                        <Text size="sm" fw={500}>{p.name}</Text>
+                        <Group gap="xs">
+                          <Text size="sm" fw={500}>{p.name}</Text>
+                          {p.companyProductActive && (
+                            <Badge size="xs" color="green" variant="light">Selecionado</Badge>
+                          )}
+                        </Group>
                         {p.description && <Text size="xs" c="dimmed" lineClamp={1}>{p.description}</Text>}
                       </Table.Td>
                       <Table.Td><Badge variant="outline" color="gray" size="xs">{p.category}</Badge></Table.Td>
-                      <Table.Td ta="right"><Text size="sm" fw={600}>{fmt(p.dailyPrice)}</Text></Table.Td>
-                      <Table.Td ta="right"><Text size="sm">{fmt(p.weeklyPrice)}</Text></Table.Td>
-                      <Table.Td ta="right"><Text size="sm">{fmt(p.monthlyPrice)}</Text></Table.Td>
+                      <Table.Td ta="right"><Text size="sm" c="dimmed">{fmt(p.dailyPrice)}</Text></Table.Td>
+                      <Table.Td ta="right"><Text size="sm" c="dimmed">{fmt(p.weeklyPrice)}</Text></Table.Td>
+                      <Table.Td ta="right"><Text size="sm" c="dimmed">{fmt(p.monthlyPrice)}</Text></Table.Td>
                       <Table.Td ta="center">
                         {p.companyProductActive ? (
                           <Tooltip label="Remover dos meus produtos" withArrow>
-                            <ActionIcon color="green" variant="light" size="sm"
+                            <ActionIcon color="red" variant="subtle" size="sm"
                               onClick={() => deselectMutation.mutate(p.id)}
                               loading={deselectMutation.isPending}>
-                              <IconCheck size={14} />
+                              <IconX size={14} />
                             </ActionIcon>
                           </Tooltip>
                         ) : (
-                          <Tooltip label="Adicionar aos meus produtos" withArrow>
-                            <ActionIcon color="gray" variant="subtle" size="sm"
-                              onClick={() => selectMutation.mutate(p.id)}
-                              loading={selectMutation.isPending}>
+                          <Tooltip label="Adicionar e informar meu preço" withArrow>
+                            <ActionIcon color="blue" variant="light" size="sm" onClick={() => setSelecting(p)}>
                               <IconPlus size={14} />
                             </ActionIcon>
                           </Tooltip>
@@ -204,7 +340,7 @@ export default function ProductsPage() {
           )}
         </Tabs.Panel>
 
-        {/* ── My products ── */}
+        {/* ── Meus produtos (com preços da empresa) ── */}
         <Tabs.Panel value="mine">
           {loadingMy ? (
             <Stack gap="sm">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={52} radius="lg" />)}</Stack>
@@ -213,7 +349,7 @@ export default function ProductsPage() {
               <Stack align="center" py="xl" gap="sm">
                 <IconShoppingCart size={40} color="var(--mantine-color-gray-3)" />
                 <Text c="dimmed">Nenhum produto selecionado</Text>
-                <Text size="sm" c="dimmed">Vá no "Catálogo Global" e clique no ícone + para adicionar produtos</Text>
+                <Text size="sm" c="dimmed">Vá no "Catálogo Global" e clique em + para adicionar produtos com seus preços</Text>
               </Stack>
             </Card>
           ) : (
@@ -223,10 +359,10 @@ export default function ProductsPage() {
                   <Table.Tr>
                     <Table.Th>Produto</Table.Th>
                     <Table.Th>Categoria</Table.Th>
-                    <Table.Th ta="right">Diária</Table.Th>
-                    <Table.Th ta="right">Semanal</Table.Th>
-                    <Table.Th ta="right">Mensal</Table.Th>
-                    <Table.Th w={80}></Table.Th>
+                    <Table.Th ta="right">Minha Diária</Table.Th>
+                    <Table.Th ta="right">Minha Semanal</Table.Th>
+                    <Table.Th ta="right">Minha Mensal</Table.Th>
+                    <Table.Th w={100} ta="center">Ações</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -237,17 +373,36 @@ export default function ProductsPage() {
                         {p.description && <Text size="xs" c="dimmed" lineClamp={1}>{p.description}</Text>}
                       </Table.Td>
                       <Table.Td><Badge variant="outline" color="gray" size="xs">{p.category}</Badge></Table.Td>
-                      <Table.Td ta="right"><Text size="sm" fw={600}>{fmt(p.dailyPrice)}</Text></Table.Td>
-                      <Table.Td ta="right"><Text size="sm">{fmt(p.weeklyPrice)}</Text></Table.Td>
-                      <Table.Td ta="right"><Text size="sm">{fmt(p.monthlyPrice)}</Text></Table.Td>
-                      <Table.Td>
-                        <Tooltip label="Remover" withArrow>
-                          <ActionIcon color="red" variant="subtle" size="sm"
-                            onClick={() => deselectMutation.mutate(p.id)}
-                            loading={deselectMutation.isPending}>
-                            <IconX size={14} />
-                          </ActionIcon>
-                        </Tooltip>
+                      <Table.Td ta="right">
+                        <Text size="sm" fw={600} c={p.companyDailyPrice ? "green" : "dimmed"}>
+                          {fmt(p.companyDailyPrice)}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        <Text size="sm" c={p.companyWeeklyPrice ? "green" : "dimmed"}>
+                          {fmt(p.companyWeeklyPrice)}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        <Text size="sm" c={p.companyMonthlyPrice ? "green" : "dimmed"}>
+                          {fmt(p.companyMonthlyPrice)}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td ta="center">
+                        <Group gap={4} justify="center">
+                          <Tooltip label="Editar preços" withArrow>
+                            <ActionIcon color="blue" variant="subtle" size="sm" onClick={() => setEditing(p)}>
+                              <IconPencil size={14} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Remover" withArrow>
+                            <ActionIcon color="red" variant="subtle" size="sm"
+                              onClick={() => deselectMutation.mutate(p.id)}
+                              loading={deselectMutation.isPending}>
+                              <IconX size={14} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   ))}
@@ -257,7 +412,7 @@ export default function ProductsPage() {
           )}
         </Tabs.Panel>
 
-        {/* ── Suggestions ── */}
+        {/* ── Sugestões enviadas ── */}
         <Tabs.Panel value="suggestions">
           {suggestions.length === 0 ? (
             <Card padding="xl" radius="lg" withBorder style={{ borderStyle: "dashed" }}>
