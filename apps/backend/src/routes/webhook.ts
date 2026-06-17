@@ -3,7 +3,6 @@ import { prisma } from "../lib/prisma.js";
 import { orchestrate } from "../orchestrator/index.js";
 import { sendWhatsAppMessage } from "../whatsapp/sender.js";
 import { logger } from "../lib/logger.js";
-import { verify360Signature } from "../middleware/webhookSignature.js";
 import type { WhatsAppWebhookPayload } from "../types.js";
 
 export const webhookRouter: ExpressRouter = Router();
@@ -31,9 +30,6 @@ webhookRouter.get("/:companySlug", (_req, res) => {
 
 // Receive messages from 360dialog
 webhookRouter.post("/:companySlug", async (req, res) => {
-  // Respond immediately — 360dialog expects < 10s
-  res.sendStatus(200);
-
   const slug = req.params.companySlug;
   const payload = req.body as WhatsAppWebhookPayload;
 
@@ -45,22 +41,36 @@ webhookRouter.post("/:companySlug", async (req, res) => {
 
     if (!company || !company.isActive) {
       logger.warn("Webhook for unknown or inactive company", { slug });
+      res.sendStatus(200);
       return;
     }
 
     if (!company.whatsappToken) {
       logger.warn("Company has no 360dialog API key configured", { slug });
+      res.sendStatus(200);
       return;
     }
 
-    // Validate signature using the company's own API key as the HMAC secret
-    // (360dialog sandbox does not send signatures, so this is a no-op in sandbox)
-    await new Promise<void>((resolve, reject) => {
-      const middleware = verify360Signature(company.whatsappToken!);
-      middleware(req, res, (err?: unknown) => {
-        if (err) reject(err); else resolve();
-      });
-    });
+    // Validate HMAC signature when 360dialog sends it.
+    // Uses WEBHOOK_SECRET env var if set; falls back to the company API key.
+    // If no signature header is present, allow through (sandbox / initial setup).
+    const sigHeader = req.headers["x-hub-signature-256"] as string | undefined;
+    if (sigHeader) {
+      const secret = process.env.WEBHOOK_SECRET ?? company.whatsappToken;
+      const { createHmac, timingSafeEqual } = await import("crypto");
+      const rawBody = (req as typeof req & { rawBody?: Buffer }).rawBody ?? Buffer.alloc(0);
+      const expected = `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`;
+      const sigBuf = Buffer.from(sigHeader);
+      const expBuf = Buffer.from(expected);
+      if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+        logger.warn("360dialog webhook signature mismatch", { slug, ip: req.ip });
+        res.sendStatus(200); // always 200 to avoid 360dialog retries
+        return;
+      }
+    }
+
+    // Acknowledge immediately after validation
+    res.sendStatus(200);
 
     for (const entry of payload.entry ?? []) {
       for (const change of entry.changes ?? []) {
