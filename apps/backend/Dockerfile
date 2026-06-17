@@ -6,6 +6,7 @@ RUN npm install -g pnpm@9
 
 # Install deps — workspace aware
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY tsconfig.base.json ./
 COPY apps/backend/package.json ./apps/backend/
 COPY packages/ ./packages/
 
