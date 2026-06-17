@@ -26,8 +26,9 @@ export default function LoginPage() {
       const { data } = await api.post("/auth/login", { email, password });
       setAuth(data.token, data.user);
       router.push("/dashboard");
-    } catch {
-      setError("Email ou senha inválidos");
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } };
+      setError(axiosErr.response?.data?.error ?? "Email ou senha inválidos");
     } finally {
       setLoading(false);
     }
