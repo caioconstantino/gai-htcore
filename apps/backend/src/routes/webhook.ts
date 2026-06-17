@@ -1,7 +1,7 @@
 import { Router, type Router as ExpressRouter } from "express";
 import { prisma } from "../lib/prisma.js";
 import { orchestrate } from "../orchestrator/index.js";
-import { sendWhatsAppMessage } from "../whatsapp/sender.js";
+import { sendWhatsAppMessage, markAsRead } from "../whatsapp/sender.js";
 import { logger } from "../lib/logger.js";
 import type { WhatsAppWebhookPayload } from "../types.js";
 
@@ -70,6 +70,9 @@ webhookRouter.post("/:companySlug", async (req, res) => {
             name: contactName,
             messageId: message.id,
           });
+
+          // Mark as read immediately — shows blue ticks to the user right away
+          markAsRead(company.whatsappToken, message.id);
 
           const response = await orchestrate({
             companyId: company.id,
