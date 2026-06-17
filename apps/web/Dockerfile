@@ -15,7 +15,7 @@ RUN pnpm install --frozen-lockfile --filter @gai/web...
 COPY apps/web ./apps/web
 COPY packages ./packages
 
-ARG NEXT_PUBLIC_API_URL=http://localhost:3001
+ARG NEXT_PUBLIC_API_URL=https://gai-api.123zai.easypanel.host/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 RUN cd apps/web && pnpm build
