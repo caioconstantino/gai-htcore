@@ -5,7 +5,10 @@ import { AIProviderFactory } from "../ai/factory.js";
 import { buildAgentContext } from "./context.js";
 import { selectAgent } from "./selector.js";
 import { analyzeSentiment } from "./sentiment.js";
+import { routeToSpecialists } from "./router.js";
+import { runSpecialistsInParallel } from "./specialist-runner.js";
 import type { WhatsAppMessage } from "../types.js";
+import type { SpecialistResult } from "./specialist-runner.js";
 
 export interface OrchestratorInput {
   companyId: string;
@@ -27,25 +30,22 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     return "";
   }
 
-  // Controle de tokens
   if (company.tokensUsed >= company.tokenLimit) {
     logger.warn(`Company ${companyId} reached token limit`);
     return "Nosso atendimento está temporariamente indisponível. Por favor, entre em contato pelo telefone.";
   }
 
-  // Busca ou cria o lead
-  let lead = await prisma.lead.upsert({
+  // Lead e conversa
+  const lead = await prisma.lead.upsert({
     where: { companyId_phone: { companyId, phone: from } },
     create: { companyId, phone: from, source: "whatsapp" },
     update: { lastInteractionAt: new Date() },
   });
 
-  // Busca ou cria conversa ativa
   let conversation = await prisma.conversation.findFirst({
     where: { companyId, leadId: lead.id, isActive: true },
     include: { currentAgent: true },
   });
-
   if (!conversation) {
     conversation = await prisma.conversation.create({
       data: { companyId, leadId: lead.id },
@@ -53,88 +53,151 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     });
   }
 
-  // Se já transferido para humano, ignora
   if (conversation.handedOffToHuman) return "";
 
-  // Salva mensagem recebida
+  const userText = message.text?.body ?? "";
+
   await prisma.message.create({
     data: {
       companyId,
       leadId: lead.id,
       conversationId: conversation.id,
       direction: "inbound",
-      content: message.text?.body ?? "",
+      content: userText,
       type: "text",
       whatsappMessageId: message.id,
       status: "delivered",
     },
   });
 
-  // Busca histórico de mensagens do Redis (cache rápido)
   const cacheKey = `conv:${conversation.id}:history`;
   const cachedHistory = await redis.get(cacheKey);
   const history: Array<{ role: "user" | "assistant" | "system"; content: string }> = cachedHistory
     ? JSON.parse(cachedHistory)
     : [];
 
-  const userText = message.text?.body ?? "";
-
-  // Análise de sentimento para priorização
   const sentiment = await analyzeSentiment(userText);
-
-  // Seleciona o agente correto
-  const agents = await prisma.agent.findMany({
-    where: { companyId, isActive: true, scope: "external" },
-  });
-
-  const selectedAgent = await selectAgent({
-    userMessage: userText,
-    currentAgentId: conversation.currentAgentId ?? undefined,
-    agents,
-    context: conversation.context as Record<string, unknown>,
-  });
-
-  if (!selectedAgent) {
-    return "Olá! Como posso te ajudar hoje?";
-  }
-
-  // Atualiza agente na conversa se mudou
-  if (conversation.currentAgentId !== selectedAgent.id) {
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: { currentAgentId: selectedAgent.id },
-    });
-  }
-
-  // Monta contexto completo para o agente
-  const agentContext = await buildAgentContext({
-    company,
-    lead,
-    conversation,
-    agent: selectedAgent,
-    sentiment,
-  });
-
-  // Chama o motor de IA
   const aiProvider = AIProviderFactory.create(company.aiProvider, company.aiModel);
 
-  const { response, tokensIn, tokensOut } = await aiProvider.chat({
-    systemPrompt: agentContext,
-    history,
-    userMessage: userText,
+  // ── Busca todos os agentes ativos da empresa ─────────────────────────
+  const allAgents = await prisma.agent.findMany({
+    where: { companyId, isActive: true },
   });
 
-  // Detecta transbordo para humano
-  const needsHandoff = response.includes("[TRANSBORDO]");
-  const cleanResponse = response.replace("[TRANSBORDO]", "").trim();
+  const orchestratorAgent = allAgents.find((a) => a.type === "orchestrator");
+  const specialists = allAgents.filter((a) => a.type !== "orchestrator" && a.scope === "external");
 
-  // Atualiza histórico no Redis (TTL 24h)
+  let finalResponse: string;
+  let totalTokensIn = 0;
+  let totalTokensOut = 0;
+  let primaryAgentId: string | null = orchestratorAgent?.id ?? null;
+
+  if (orchestratorAgent && specialists.length > 0) {
+    // ── FLUXO MULTI-AGENTE ──────────────────────────────────────────────
+    logger.info("Using orchestrator multi-agent flow", {
+      companyId,
+      specialistCount: specialists.length,
+    });
+
+    // 1. Router: decide quais especialistas consultar
+    const selectedSpecialists = await routeToSpecialists(userText, specialists, aiProvider);
+
+    // 2. Especialistas rodam em paralelo
+    const specialistResults = await runSpecialistsInParallel(selectedSpecialists, {
+      company,
+      lead,
+      conversation,
+      userMessage: userText,
+      history,
+      aiProvider,
+      sentiment,
+    });
+
+    specialistResults.forEach((r) => {
+      totalTokensIn += r.tokensIn;
+      totalTokensOut += r.tokensOut;
+    });
+
+    // 3. Orquestrador sintetiza as respostas dos especialistas
+    const synthPrompt = buildSynthesizerPrompt(orchestratorAgent.prompt, specialistResults);
+
+    const { response, tokensIn, tokensOut } = await aiProvider.chat({
+      systemPrompt: synthPrompt,
+      history,
+      userMessage: userText,
+    });
+
+    totalTokensIn += tokensIn;
+    totalTokensOut += tokensOut;
+    finalResponse = response;
+  } else if (orchestratorAgent && specialists.length === 0) {
+    // Orquestrador sem especialistas: responde sozinho
+    const agentContext = await buildAgentContext({
+      company,
+      lead,
+      conversation,
+      agent: orchestratorAgent,
+      sentiment,
+    });
+
+    const { response, tokensIn, tokensOut } = await aiProvider.chat({
+      systemPrompt: agentContext,
+      history,
+      userMessage: userText,
+    });
+
+    totalTokensIn += tokensIn;
+    totalTokensOut += tokensOut;
+    finalResponse = response;
+  } else {
+    // ── FLUXO LEGADO (sem orquestrador) ────────────────────────────────
+    const selectedAgent = await selectAgent({
+      userMessage: userText,
+      currentAgentId: conversation.currentAgentId ?? undefined,
+      agents: specialists.length > 0 ? specialists : allAgents,
+      context: conversation.context as Record<string, unknown>,
+    });
+
+    if (!selectedAgent) return "Olá! Como posso te ajudar hoje?";
+
+    primaryAgentId = selectedAgent.id;
+
+    if (conversation.currentAgentId !== selectedAgent.id) {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { currentAgentId: selectedAgent.id },
+      });
+    }
+
+    const agentContext = await buildAgentContext({
+      company,
+      lead,
+      conversation,
+      agent: selectedAgent,
+      sentiment,
+    });
+
+    const { response, tokensIn, tokensOut } = await aiProvider.chat({
+      systemPrompt: agentContext,
+      history,
+      userMessage: userText,
+    });
+
+    totalTokensIn += tokensIn;
+    totalTokensOut += tokensOut;
+    finalResponse = response;
+  }
+
+  // ── Pós-processamento ─────────────────────────────────────────────────
+  const needsHandoff = finalResponse.includes("[TRANSBORDO]");
+  const cleanResponse = finalResponse.replace("[TRANSBORDO]", "").trim();
+
   history.push({ role: "user", content: userText });
   history.push({ role: "assistant", content: cleanResponse });
   await redis.setex(cacheKey, 86400, JSON.stringify(history.slice(-20)));
 
-  // Salva tokens e atualiza contadores
-  const totalTokens = tokensIn + tokensOut;
+  const totalTokens = totalTokensIn + totalTokensOut;
+
   await Promise.all([
     prisma.message.create({
       data: {
@@ -144,7 +207,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
         direction: "outbound",
         content: cleanResponse,
         type: "text",
-        agentId: selectedAgent.id,
+        agentId: primaryAgentId,
         status: "pending",
         tokensUsed: totalTokens,
       },
@@ -156,17 +219,16 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     prisma.tokenUsageLog.create({
       data: {
         companyId,
-        agentId: selectedAgent.id,
+        agentId: primaryAgentId,
         conversationId: conversation.id,
-        tokensIn,
-        tokensOut,
+        tokensIn: totalTokensIn,
+        tokensOut: totalTokensOut,
         totalTokens,
         model: company.aiModel,
       },
     }),
   ]);
 
-  // Transbordo: marca conversa e atualiza lead
   if (needsHandoff) {
     await Promise.all([
       prisma.conversation.update({
@@ -181,7 +243,6 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     logger.info(`Lead ${lead.id} handed off to human`);
   }
 
-  // Atualiza temperatura do lead com base no sentimento
   if (sentiment === "hot") {
     await prisma.lead.update({
       where: { id: lead.id },
@@ -190,4 +251,30 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   }
 
   return cleanResponse;
+}
+
+function buildSynthesizerPrompt(
+  orchestratorBasePrompt: string,
+  specialistResults: SpecialistResult[],
+): string {
+  const specialistSections = specialistResults
+    .map(
+      (r) =>
+        `=== ESPECIALISTA: ${r.specialistName} (${r.specialistType}) ===\n${r.response}`,
+    )
+    .join("\n\n");
+
+  return `${orchestratorBasePrompt}
+
+━━━ ANÁLISES DOS ESPECIALISTAS ━━━
+${specialistSections}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+INSTRUÇÕES DE SÍNTESE:
+- Você recebeu as análises acima dos seus especialistas consultados
+- Sintetize as informações em UMA resposta coerente, natural e útil para o cliente
+- Mantenha o tom e a persona definidos no seu prompt acima
+- Elimine redundâncias e conflitos entre especialistas
+- Se qualquer especialista indicou [TRANSBORDO], inclua [TRANSBORDO] na sua resposta
+- Responda em português brasileiro de forma conversacional`;
 }
