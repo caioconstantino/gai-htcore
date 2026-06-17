@@ -27,39 +27,66 @@ export async function markAsRead(apiKey: string, messageId: string): Promise<voi
 }
 
 /**
- * Split a response into natural WhatsApp-sized chunks.
- * Strategy: split on blank lines first; if a chunk is still long,
- * split at sentence endings near the 280-char mark.
+ * Split a response into one sentence per WhatsApp message.
+ *
+ * Split points: [.!?] followed by whitespace and an uppercase letter (pt-BR aware).
+ * Short sentences (< MIN_LEN chars) are merged with the previous chunk to avoid
+ * single-word bubbles. Newlines are also treated as split points.
  */
-export function splitMessage(text: string, maxLen = 280): string[] {
+const MIN_SENTENCE_LEN = 35;
+const PT_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÀÂÊÔÃÕÜÇ";
+
+export function splitMessage(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
 
-  // Split on double newlines (paragraphs)
-  const paragraphs = trimmed.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  // Split at: [.!?] + spaces, where the next non-space char is uppercase (new sentence)
+  // OR at newlines. Keep the punctuation with the preceding sentence.
+  const raw: string[] = [];
+  let cursor = 0;
 
-  const chunks: string[] = [];
-  for (const para of paragraphs) {
-    if (para.length <= maxLen) {
-      chunks.push(para);
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+
+    if (ch === "\n") {
+      const part = trimmed.slice(cursor, i).trim();
+      if (part) raw.push(part);
+      cursor = i + 1;
       continue;
     }
-    // Para too long — split at sentence boundary near maxLen
-    let remaining = para;
-    while (remaining.length > maxLen) {
-      // Find last sentence ending before maxLen
-      const slice = remaining.slice(0, maxLen + 1);
-      const sentenceEnd = Math.max(
-        slice.lastIndexOf(". "),
-        slice.lastIndexOf("! "),
-        slice.lastIndexOf("? "),
-        slice.lastIndexOf(".\n"),
-      );
-      const cutAt = sentenceEnd > maxLen * 0.4 ? sentenceEnd + 1 : maxLen;
-      chunks.push(remaining.slice(0, cutAt).trim());
-      remaining = remaining.slice(cutAt).trim();
+
+    if (ch === "." || ch === "!" || ch === "?") {
+      // Consume any trailing punctuation (e.g. "!!")
+      let end = i + 1;
+      while (end < trimmed.length && ".!?".includes(trimmed[end])) end++;
+      // Skip spaces
+      let next = end;
+      while (next < trimmed.length && trimmed[next] === " ") next++;
+      // If the next real character is uppercase → sentence boundary
+      if (next >= trimmed.length || PT_UPPER.includes(trimmed[next])) {
+        const part = trimmed.slice(cursor, end).trim();
+        if (part) raw.push(part);
+        cursor = next;
+        i = next - 1;
+      }
     }
-    if (remaining) chunks.push(remaining);
+  }
+
+  // Remaining text
+  const tail = trimmed.slice(cursor).trim();
+  if (tail) raw.push(tail);
+
+  if (raw.length === 0) return [trimmed];
+
+  // Merge very short chunks with the previous one
+  const chunks: string[] = [];
+  for (const s of raw) {
+    const last = chunks[chunks.length - 1];
+    if (last && last.length < MIN_SENTENCE_LEN) {
+      chunks[chunks.length - 1] = `${last} ${s}`;
+    } else {
+      chunks.push(s);
+    }
   }
 
   return chunks.filter(Boolean);

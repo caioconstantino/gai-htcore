@@ -254,5 +254,6 @@ INSTRUÇÕES DE SÍNTESE:
 - Mantenha o tom e a persona definidos no seu prompt acima
 - Elimine redundâncias e conflitos entre especialistas
 - Se qualquer especialista indicou [TRANSBORDO], inclua [TRANSBORDO] na sua resposta
-- Responda em português brasileiro de forma conversacional`;
+- Responda em português brasileiro de forma conversacional
+- FORMATO OBRIGATÓRIO: escreva UMA frase por vez, terminando cada frase com ponto, exclamação ou interrogação antes de começar a próxima. Não use listas com traços ou asteriscos. Cada ideia nova em uma frase nova.`;
 }
