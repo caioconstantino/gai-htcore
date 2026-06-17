@@ -12,10 +12,8 @@ export interface SpecialistResult {
   tokensOut: number;
 }
 
-/**
- * Runs a specialist agent and returns their expert analysis to the orchestrator.
- * Specialists respond from their domain expertise — the orchestrator synthesizes.
- */
+type OnLog = (name: string, message: string, metadata?: Record<string, unknown>) => Promise<void>;
+
 export async function runSpecialist(input: {
   specialist: Agent;
   company: Company & { commercialRules: unknown };
@@ -25,8 +23,11 @@ export async function runSpecialist(input: {
   history: ChatMessage[];
   aiProvider: AIProvider;
   sentiment: string;
+  onLog?: OnLog;
 }): Promise<SpecialistResult> {
-  const { specialist, company, lead, conversation, userMessage, history, aiProvider, sentiment } = input;
+  const { specialist, company, lead, conversation, userMessage, history, aiProvider, sentiment, onLog } = input;
+
+  await onLog?.(specialist.name, "Consultado pelo orquestrador — analisando...");
 
   const baseContext = await buildAgentContext({
     company: company as Parameters<typeof buildAgentContext>[0]["company"],
@@ -53,41 +54,21 @@ Forneça sua análise e recomendação de resposta para o orquestrador sintetiza
       userMessage,
     });
 
-    logger.debug(`Specialist "${specialist.name}" responded`, {
-      tokens: tokensIn + tokensOut,
-      preview: response.slice(0, 80),
-    });
+    logger.debug(`Specialist "${specialist.name}" responded`, { tokens: tokensIn + tokensOut });
+    await onLog?.(specialist.name, response, { tokensIn, tokensOut });
 
-    return {
-      specialistId: specialist.id,
-      specialistName: specialist.name,
-      specialistType: specialist.type,
-      response,
-      tokensIn,
-      tokensOut,
-    };
+    return { specialistId: specialist.id, specialistName: specialist.name, specialistType: specialist.type, response, tokensIn, tokensOut };
   } catch (err) {
     logger.error(`Specialist "${specialist.name}" failed`, { err });
-    return {
-      specialistId: specialist.id,
-      specialistName: specialist.name,
-      specialistType: specialist.type,
-      response: "",
-      tokensIn: 0,
-      tokensOut: 0,
-    };
+    await onLog?.(specialist.name, `Erro: ${(err as Error).message}`, { error: true });
+    return { specialistId: specialist.id, specialistName: specialist.name, specialistType: specialist.type, response: "", tokensIn: 0, tokensOut: 0 };
   }
 }
 
-/**
- * Runs all specialists in parallel and returns their combined results.
- */
 export async function runSpecialistsInParallel(
   specialists: Agent[],
   input: Omit<Parameters<typeof runSpecialist>[0], "specialist">,
 ): Promise<SpecialistResult[]> {
-  const results = await Promise.all(
-    specialists.map((specialist) => runSpecialist({ ...input, specialist })),
-  );
+  const results = await Promise.all(specialists.map((specialist) => runSpecialist({ ...input, specialist })));
   return results.filter((r) => r.response.length > 0);
 }

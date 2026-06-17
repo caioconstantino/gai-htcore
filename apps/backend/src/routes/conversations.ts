@@ -112,6 +112,22 @@ conversationsRouter.post("/:id/send", async (req: AuthRequest, res, next) => {
   } catch (err) { next(err); }
 });
 
+conversationsRouter.get("/:id/orch-logs", async (req: AuthRequest, res, next) => {
+  try {
+    const conversation = await prisma.conversation.findUnique({ where: { id: req.params.id }, select: { companyId: true } });
+    if (!conversation) { res.status(404).json({ error: "Conversa não encontrada" }); return; }
+    if (req.user?.role !== "super_admin" && conversation.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    const logs = await prisma.orchestrationLog.findMany({
+      where: { conversationId: req.params.id },
+      orderBy: { createdAt: "asc" },
+      take: 200,
+    });
+    res.json(logs);
+  } catch (err) { next(err); }
+});
+
 conversationsRouter.post("/:id/handoff", async (req: AuthRequest, res, next) => {
   try {
     const conversation = await prisma.conversation.findUnique({ where: { id: req.params.id }, select: { companyId: true } });

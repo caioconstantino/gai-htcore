@@ -39,6 +39,7 @@ model Company {
   tokenUsageLogs     TokenUsageLog[]
   companyProducts    CompanyProduct[]
   productSuggestions ProductSuggestion[]
+  orchestrationLogs  OrchestrationLog[]
 
   @@map("companies")
 }
@@ -325,4 +326,24 @@ model TokenUsageLog {
   company Company @relation(fields: [companyId], references: [id])
 
   @@map("token_usage_logs")
+}
+
+// ─── LOGS DE ORQUESTRAÇÃO ────────────────────────────────────────────────────
+
+model OrchestrationLog {
+  id             String   @id @default(cuid())
+  companyId      String
+  conversationId String
+  leadPhone      String
+  step           String   // "client_message" | "router" | "specialist" | "orchestrator" | "send" | "error"
+  actor          String
+  message        String
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([conversationId, createdAt])
+  @@index([companyId, createdAt])
+  @@map("orchestration_logs")
 }

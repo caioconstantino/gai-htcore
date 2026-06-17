@@ -20,7 +20,6 @@ export async function sendWhatsAppMessage(input: SendMessageInput): Promise<void
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      messaging_product: "whatsapp",
       to,
       type: "text",
       text: { body: text },

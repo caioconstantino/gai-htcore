@@ -7,6 +7,7 @@ import { selectAgent } from "./selector.js";
 import { analyzeSentiment } from "./sentiment.js";
 import { routeToSpecialists } from "./router.js";
 import { runSpecialistsInParallel } from "./specialist-runner.js";
+import { orchLog } from "./orch-logger.js";
 import type { WhatsAppMessage } from "../types.js";
 import type { SpecialistResult } from "./specialist-runner.js";
 
@@ -35,7 +36,6 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     return "Nosso atendimento está temporariamente indisponível. Por favor, entre em contato pelo telefone.";
   }
 
-  // Lead e conversa
   const lead = await prisma.lead.upsert({
     where: { companyId_phone: { companyId, phone: from } },
     create: { companyId, phone: from, source: "whatsapp" },
@@ -56,12 +56,17 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   if (conversation.handedOffToHuman) return "";
 
   const userText = message.text?.body ?? "";
+  const convId = conversation.id;
+
+  const logCtx = { companyId, conversationId: convId, leadPhone: from };
+
+  await orchLog({ ...logCtx, step: "client_message", actor: `Cliente (${from})`, message: userText });
 
   await prisma.message.create({
     data: {
       companyId,
       leadId: lead.id,
-      conversationId: conversation.id,
+      conversationId: convId,
       direction: "inbound",
       content: userText,
       type: "text",
@@ -70,7 +75,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     },
   });
 
-  const cacheKey = `conv:${conversation.id}:history`;
+  const cacheKey = `conv:${convId}:history`;
   const cachedHistory = await redis.get(cacheKey);
   const history: Array<{ role: "user" | "assistant" | "system"; content: string }> = cachedHistory
     ? JSON.parse(cachedHistory)
@@ -79,11 +84,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   const sentiment = await analyzeSentiment(userText);
   const aiProvider = AIProviderFactory.create(company.aiProvider, company.aiModel);
 
-  // ── Busca todos os agentes ativos da empresa ─────────────────────────
-  const allAgents = await prisma.agent.findMany({
-    where: { companyId, isActive: true },
-  });
-
+  const allAgents = await prisma.agent.findMany({ where: { companyId, isActive: true } });
   const orchestratorAgent = allAgents.find((a) => a.type === "orchestrator");
   const specialists = allAgents.filter((a) => a.type !== "orchestrator" && a.scope === "external");
 
@@ -93,16 +94,26 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   let primaryAgentId: string | null = orchestratorAgent?.id ?? null;
 
   if (orchestratorAgent && specialists.length > 0) {
-    // ── FLUXO MULTI-AGENTE ──────────────────────────────────────────────
-    logger.info("Using orchestrator multi-agent flow", {
-      companyId,
-      specialistCount: specialists.length,
+    await orchLog({
+      ...logCtx,
+      step: "orchestrator",
+      actor: `Orquestrador: ${orchestratorAgent.name}`,
+      message: `Fluxo multi-agente iniciado — ${specialists.length} especialista(s) disponível(is)`,
+      metadata: { specialists: specialists.map((s) => s.name) },
     });
 
-    // 1. Router: decide quais especialistas consultar
+    // 1. Router
+    await orchLog({ ...logCtx, step: "router", actor: "Router (IA)", message: "Analisando mensagem para selecionar especialistas..." });
     const selectedSpecialists = await routeToSpecialists(userText, specialists, aiProvider);
+    await orchLog({
+      ...logCtx,
+      step: "router",
+      actor: "Router (IA)",
+      message: `Especialistas selecionados: ${selectedSpecialists.map((s) => s.name).join(", ")}`,
+      metadata: { selected: selectedSpecialists.map((s) => ({ id: s.id, name: s.name })) },
+    });
 
-    // 2. Especialistas rodam em paralelo
+    // 2. Especialistas em paralelo
     const specialistResults = await runSpecialistsInParallel(selectedSpecialists, {
       company,
       lead,
@@ -111,6 +122,9 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
       history,
       aiProvider,
       sentiment,
+      onLog: async (name, msg, meta) => {
+        await orchLog({ ...logCtx, step: "specialist", actor: `Especialista: ${name}`, message: msg, metadata: meta });
+      },
     });
 
     specialistResults.forEach((r) => {
@@ -118,39 +132,30 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
       totalTokensOut += r.tokensOut;
     });
 
-    // 3. Orquestrador sintetiza as respostas dos especialistas
+    // 3. Síntese
+    await orchLog({ ...logCtx, step: "synthesizer", actor: `Orquestrador: ${orchestratorAgent.name}`, message: "Sintetizando respostas dos especialistas..." });
     const synthPrompt = buildSynthesizerPrompt(orchestratorAgent.prompt, specialistResults);
-
-    const { response, tokensIn, tokensOut } = await aiProvider.chat({
-      systemPrompt: synthPrompt,
-      history,
-      userMessage: userText,
-    });
-
+    const { response, tokensIn, tokensOut } = await aiProvider.chat({ systemPrompt: synthPrompt, history, userMessage: userText });
     totalTokensIn += tokensIn;
     totalTokensOut += tokensOut;
     finalResponse = response;
+
+    await orchLog({
+      ...logCtx,
+      step: "synthesizer",
+      actor: `Orquestrador: ${orchestratorAgent.name}`,
+      message: "Resposta sintetizada pronta",
+      metadata: { tokensIn, tokensOut, preview: response.slice(0, 120) },
+    });
   } else if (orchestratorAgent && specialists.length === 0) {
-    // Orquestrador sem especialistas: responde sozinho
-    const agentContext = await buildAgentContext({
-      company,
-      lead,
-      conversation,
-      agent: orchestratorAgent,
-      sentiment,
-    });
-
-    const { response, tokensIn, tokensOut } = await aiProvider.chat({
-      systemPrompt: agentContext,
-      history,
-      userMessage: userText,
-    });
-
+    await orchLog({ ...logCtx, step: "orchestrator", actor: `Orquestrador: ${orchestratorAgent.name}`, message: "Sem especialistas — respondendo diretamente" });
+    const agentContext = await buildAgentContext({ company, lead, conversation, agent: orchestratorAgent, sentiment });
+    const { response, tokensIn, tokensOut } = await aiProvider.chat({ systemPrompt: agentContext, history, userMessage: userText });
     totalTokensIn += tokensIn;
     totalTokensOut += tokensOut;
     finalResponse = response;
   } else {
-    // ── FLUXO LEGADO (sem orquestrador) ────────────────────────────────
+    // Fluxo legado
     const selectedAgent = await selectAgent({
       userMessage: userText,
       currentAgentId: conversation.currentAgentId ?? undefined,
@@ -159,36 +164,21 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     });
 
     if (!selectedAgent) return "Olá! Como posso te ajudar hoje?";
-
     primaryAgentId = selectedAgent.id;
 
+    await orchLog({ ...logCtx, step: "orchestrator", actor: `Agente: ${selectedAgent.name}`, message: "Fluxo legado — agente selecionado por keywords" });
+
     if (conversation.currentAgentId !== selectedAgent.id) {
-      await prisma.conversation.update({
-        where: { id: conversation.id },
-        data: { currentAgentId: selectedAgent.id },
-      });
+      await prisma.conversation.update({ where: { id: convId }, data: { currentAgentId: selectedAgent.id } });
     }
 
-    const agentContext = await buildAgentContext({
-      company,
-      lead,
-      conversation,
-      agent: selectedAgent,
-      sentiment,
-    });
-
-    const { response, tokensIn, tokensOut } = await aiProvider.chat({
-      systemPrompt: agentContext,
-      history,
-      userMessage: userText,
-    });
-
+    const agentContext = await buildAgentContext({ company, lead, conversation, agent: selectedAgent, sentiment });
+    const { response, tokensIn, tokensOut } = await aiProvider.chat({ systemPrompt: agentContext, history, userMessage: userText });
     totalTokensIn += tokensIn;
     totalTokensOut += tokensOut;
     finalResponse = response;
   }
 
-  // ── Pós-processamento ─────────────────────────────────────────────────
   const needsHandoff = finalResponse.includes("[TRANSBORDO]");
   const cleanResponse = finalResponse.replace("[TRANSBORDO]", "").trim();
 
@@ -203,7 +193,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
       data: {
         companyId,
         leadId: lead.id,
-        conversationId: conversation.id,
+        conversationId: convId,
         direction: "outbound",
         content: cleanResponse,
         type: "text",
@@ -212,66 +202,54 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
         tokensUsed: totalTokens,
       },
     }),
-    prisma.company.update({
-      where: { id: companyId },
-      data: { tokensUsed: { increment: totalTokens } },
-    }),
+    prisma.company.update({ where: { id: companyId }, data: { tokensUsed: { increment: totalTokens } } }),
     prisma.tokenUsageLog.create({
       data: {
         companyId,
         agentId: primaryAgentId,
-        conversationId: conversation.id,
+        conversationId: convId,
         tokensIn: totalTokensIn,
         tokensOut: totalTokensOut,
         totalTokens,
         model: company.aiModel,
       },
     }),
+    orchLog({
+      ...logCtx,
+      step: "send",
+      actor: "Sistema",
+      message: cleanResponse,
+      metadata: { totalTokens, needsHandoff },
+    }),
   ]);
 
   if (needsHandoff) {
     await Promise.all([
-      prisma.conversation.update({
-        where: { id: conversation.id },
-        data: { handedOffToHuman: true },
-      }),
-      prisma.lead.update({
-        where: { id: lead.id },
-        data: { stage: "negotiating" },
-      }),
+      prisma.conversation.update({ where: { id: convId }, data: { handedOffToHuman: true } }),
+      prisma.lead.update({ where: { id: lead.id }, data: { stage: "negotiating" } }),
     ]);
     logger.info(`Lead ${lead.id} handed off to human`);
   }
 
   if (sentiment === "hot") {
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: { temperature: "hot" },
-    });
+    await prisma.lead.update({ where: { id: lead.id }, data: { temperature: "hot" } });
   }
 
   return cleanResponse;
 }
 
-function buildSynthesizerPrompt(
-  orchestratorBasePrompt: string,
-  specialistResults: SpecialistResult[],
-): string {
-  const specialistSections = specialistResults
-    .map(
-      (r) =>
-        `=== ESPECIALISTA: ${r.specialistName} (${r.specialistType}) ===\n${r.response}`,
-    )
+function buildSynthesizerPrompt(orchestratorBasePrompt: string, specialistResults: SpecialistResult[]): string {
+  const sections = specialistResults
+    .map((r) => `=== ESPECIALISTA: ${r.specialistName} (${r.specialistType}) ===\n${r.response}`)
     .join("\n\n");
 
   return `${orchestratorBasePrompt}
 
 ━━━ ANÁLISES DOS ESPECIALISTAS ━━━
-${specialistSections}
+${sections}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 INSTRUÇÕES DE SÍNTESE:
-- Você recebeu as análises acima dos seus especialistas consultados
 - Sintetize as informações em UMA resposta coerente, natural e útil para o cliente
 - Mantenha o tom e a persona definidos no seu prompt acima
 - Elimine redundâncias e conflitos entre especialistas
