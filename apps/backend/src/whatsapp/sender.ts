@@ -107,8 +107,9 @@ async function sendSingle(apiKey: string, to: string, text: string): Promise<voi
 }
 
 /**
- * Send a response message, automatically splitting into multiple parts
- * with a natural delay between them.
+ * Send a response message split into sentences, with a delay between parts.
+ * If a part fails (e.g. Meta rate-limit 131037), the remaining parts are joined
+ * and sent as a single fallback message.
  */
 export async function sendWhatsAppMessage(input: {
   apiKey: string;
@@ -116,14 +117,23 @@ export async function sendWhatsAppMessage(input: {
   text: string;
   delayBetweenMs?: number;
 }): Promise<void> {
-  const { apiKey, to, text, delayBetweenMs = 600 } = input;
+  const { apiKey, to, text, delayBetweenMs = 1200 } = input;
 
   const chunks = splitMessage(text);
   if (chunks.length === 0) return;
 
   for (let i = 0; i < chunks.length; i++) {
     if (i > 0) await delay(delayBetweenMs);
-    await sendSingle(apiKey, to, chunks[i]);
-    logger.info("360dialog message sent", { to, part: i + 1, total: chunks.length });
+    try {
+      await sendSingle(apiKey, to, chunks[i]);
+      logger.info("360dialog message sent", { to, part: i + 1, total: chunks.length });
+    } catch (err) {
+      // If a part fails, consolidate all remaining (including this one) into one message
+      const remaining = chunks.slice(i).join(" ");
+      logger.warn("Part failed — sending remaining as single message", { to, part: i + 1, total: chunks.length });
+      await sendSingle(apiKey, to, remaining);
+      logger.info("360dialog fallback message sent", { to });
+      break;
+    }
   }
 }
