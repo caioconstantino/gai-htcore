@@ -1,5 +1,6 @@
 import { Router, type Router as ExpressRouter } from "express";
 import { prisma } from "../lib/prisma.js";
+import { sendWhatsAppMessage } from "../whatsapp/sender.js";
 import { type AuthRequest } from "../middleware/auth.js";
 
 export const conversationsRouter: ExpressRouter = Router();
@@ -66,6 +67,48 @@ conversationsRouter.get("/:id/messages", async (req: AuthRequest, res, next) => 
       orderBy: { createdAt: "asc" },
     });
     res.json(messages);
+  } catch (err) { next(err); }
+});
+
+conversationsRouter.post("/:id/send", async (req: AuthRequest, res, next) => {
+  try {
+    const { message } = req.body as { message: string };
+    if (!message?.trim()) { res.status(400).json({ error: "Mensagem obrigatória" }); return; }
+
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: req.params.id },
+      include: { lead: true, company: true },
+    });
+    if (!conversation) { res.status(404).json({ error: "Conversa não encontrada" }); return; }
+    if (req.user?.role !== "super_admin" && conversation.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+
+    // Salva a mensagem no banco
+    const saved = await prisma.message.create({
+      data: {
+        companyId: conversation.companyId,
+        leadId: conversation.leadId,
+        conversationId: conversation.id,
+        direction: "outbound",
+        content: message.trim(),
+        type: "text",
+        sentByUserId: req.user?.userId,
+        status: "pending",
+      },
+    });
+
+    // Envia via WhatsApp se a empresa tiver API key
+    if (conversation.company.whatsappToken) {
+      await sendWhatsAppMessage({
+        apiKey: conversation.company.whatsappToken,
+        to: conversation.lead.phone,
+        text: message.trim(),
+      });
+      await prisma.message.update({ where: { id: saved.id }, data: { status: "delivered" } });
+    }
+
+    res.json(saved);
   } catch (err) { next(err); }
 });
 

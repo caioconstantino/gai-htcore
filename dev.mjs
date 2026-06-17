@@ -56,6 +56,24 @@ async function main() {
   try { execSync(`taskkill /F /IM node.exe /FI "PID ne ${process.pid}" 2>nul`, { stdio: "ignore" }); } catch {}
   await sleep(800);
 
+  // 1b. Tentar iniciar Redis via WSL (se disponível) ou avisar
+  try {
+    const wslCheck = spawnSync("wsl", ["redis-cli", "ping"], { timeout: 3000, encoding: "utf8" });
+    if (wslCheck.stdout?.trim() === "PONG") {
+      log("redis  ", c.green, "Redis já está rodando.");
+    } else {
+      const wslStart = spawnSync("wsl", ["bash", "-c", "sudo service redis-server start 2>/dev/null || redis-server --daemonize yes 2>/dev/null"], { timeout: 5000, encoding: "utf8" });
+      if (wslStart.status === 0) {
+        log("redis  ", c.green, "Redis iniciado via WSL.");
+      } else {
+        log("redis  ", c.yellow, "WSL não disponível. BullMQ e cache de histórico estarão desabilitados.");
+        log("redis  ", c.yellow, "Para ativar: instale WSL2 + 'sudo apt install redis-server', ou Docker Desktop.");
+      }
+    }
+  } catch {
+    log("redis  ", c.yellow, "Redis não encontrado — filas de follow-up desabilitadas.");
+  }
+
   // 2. Executar tunnel.mjs (ngrok + .env + 360dialog) — aguarda terminar
   log("setup", c.cyan, "Configurando ngrok e webhooks...");
   const tunnel = spawnSync("node", ["scripts/tunnel.mjs"], {
