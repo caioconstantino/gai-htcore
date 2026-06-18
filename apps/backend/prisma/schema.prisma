@@ -93,13 +93,28 @@ model Agent {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  company       Company?       @relation(fields: [companyId], references: [id])
-  template      Agent?         @relation("TemplateInstances", fields: [templateId], references: [id])
-  instances     Agent[]        @relation("TemplateInstances")
-  conversations Conversation[]
-  messages      Message[]
+  company        Company?             @relation(fields: [companyId], references: [id])
+  template       Agent?               @relation("TemplateInstances", fields: [templateId], references: [id])
+  instances      Agent[]              @relation("TemplateInstances")
+  conversations  Conversation[]
+  messages       Message[]
+  promptVersions AgentPromptVersion[]
 
   @@map("agents")
+}
+
+model AgentPromptVersion {
+  id        String   @id @default(cuid())
+  agentId   String
+  version   Int
+  prompt    String
+  label     String?
+  createdAt DateTime @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, version])
+  @@map("agent_prompt_versions")
 }
 
 // ─── PRODUTOS / CATÁLOGO GLOBAL ──────────────────────────────────────────────

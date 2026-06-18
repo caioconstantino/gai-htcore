@@ -10,7 +10,7 @@ const agentSchema = z.object({
   description: z.string().max(500).optional(),
   type: z.string().min(2).max(50),
   scope: z.enum(["external", "internal"]).default("external"),
-  prompt: z.string().max(8000).default(""),
+  prompt: z.string().max(12000).default(""),
   triggerKeywords: z.array(z.string()).default([]),
   isActive: z.boolean().default(true),
 });
@@ -71,5 +71,101 @@ agentsRouter.delete("/:id", async (req: AuthRequest, res, next) => {
     }
     await prisma.agent.delete({ where: { id: req.params.id } });
     res.status(204).send();
+  } catch (err) { next(err); }
+});
+
+// ── Prompt version history ────────────────────────────────────────────────────
+
+agentsRouter.get("/:id/prompt-versions", async (req: AuthRequest, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { id: req.params.id }, select: { companyId: true } });
+    if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
+    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    const versions = await prisma.agentPromptVersion.findMany({
+      where: { agentId: req.params.id },
+      orderBy: { version: "desc" },
+      take: 50,
+    });
+    res.json(versions);
+  } catch (err) { next(err); }
+});
+
+// Save a new prompt version (and update the agent's live prompt)
+agentsRouter.post("/:id/prompt-versions", async (req: AuthRequest, res, next) => {
+  try {
+    const { prompt, label, keywords } = req.body as { prompt: string; label?: string; keywords?: string[] };
+    if (!prompt?.trim()) { res.status(400).json({ error: "prompt é obrigatório" }); return; }
+
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      select: { companyId: true, promptVersion: true },
+    });
+    if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
+    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+
+    const nextVersion = agent.promptVersion + 1;
+
+    const [version] = await prisma.$transaction([
+      prisma.agentPromptVersion.create({
+        data: {
+          agentId: req.params.id,
+          version: nextVersion,
+          prompt: prompt.trim(),
+          label: label?.trim() || null,
+        },
+      }),
+      prisma.agent.update({
+        where: { id: req.params.id },
+        data: {
+          prompt: prompt.trim(),
+          promptVersion: nextVersion,
+          ...(keywords !== undefined ? { triggerKeywords: keywords } : {}),
+        },
+      }),
+    ]);
+
+    res.status(201).json(version);
+  } catch (err) { next(err); }
+});
+
+// Restore a previous version as the current prompt
+agentsRouter.post("/:id/prompt-versions/:versionId/restore", async (req: AuthRequest, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      select: { companyId: true, promptVersion: true },
+    });
+    if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
+    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+
+    const source = await prisma.agentPromptVersion.findUnique({ where: { id: req.params.versionId } });
+    if (!source || source.agentId !== req.params.id) {
+      res.status(404).json({ error: "Versão não encontrada" }); return;
+    }
+
+    const nextVersion = agent.promptVersion + 1;
+
+    const [restored] = await prisma.$transaction([
+      prisma.agentPromptVersion.create({
+        data: {
+          agentId: req.params.id,
+          version: nextVersion,
+          prompt: source.prompt,
+          label: `Restaurado da v${source.version}${source.label ? ` (${source.label})` : ""}`,
+        },
+      }),
+      prisma.agent.update({
+        where: { id: req.params.id },
+        data: { prompt: source.prompt, promptVersion: nextVersion },
+      }),
+    ]);
+
+    res.status(201).json(restored);
   } catch (err) { next(err); }
 });
