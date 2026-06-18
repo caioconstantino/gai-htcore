@@ -88,7 +88,16 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
 
   // Sentiment is a fast keyword check — no await needed, runs sync
   const sentiment = analyzeSentiment(userText);
-  const aiProvider = AIProviderFactory.create(company.aiProvider, company.aiModel);
+
+  // Default provider from company; individual agents may override with their own model
+  const defaultProvider = AIProviderFactory.create(company.aiProvider, company.aiModel);
+  const agentProvider = (agent: { aiProvider?: string | null; aiModel?: string | null }) =>
+    agent.aiProvider && agent.aiModel
+      ? AIProviderFactory.create(agent.aiProvider, agent.aiModel)
+      : defaultProvider;
+
+  // Keep aiProvider as the company-level default (used for router + synthesis)
+  const aiProvider = defaultProvider;
 
   const orchestratorAgent = allAgents.find((a) => a.type === "orchestrator");
   const specialists = allAgents.filter((a) => a.type !== "orchestrator" && a.scope === "external");
@@ -147,6 +156,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
         userMessage: userText,
         history,
         aiProvider,
+        getProvider: agentProvider,
         sentiment,
         directMode,
         onLog: async (name, msg, meta) => {
@@ -190,7 +200,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   } else if (orchestratorAgent && specialists.length === 0) {
     await orchLog({ ...logCtx, step: "orchestrator", actor: `Orquestrador: ${orchestratorAgent.name}`, message: "Sem especialistas — respondendo diretamente" });
     const agentContext = await buildAgentContext({ company, lead, conversation, agent: orchestratorAgent, sentiment });
-    const { response, tokensIn, tokensOut } = await aiProvider.chat({ systemPrompt: agentContext, history, userMessage: userText });
+    const { response, tokensIn, tokensOut } = await agentProvider(orchestratorAgent).chat({ systemPrompt: agentContext, history, userMessage: userText });
     totalTokensIn += tokensIn;
     totalTokensOut += tokensOut;
     finalResponse = response;
@@ -213,7 +223,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     }
 
     const agentContext = await buildAgentContext({ company, lead, conversation, agent: selectedAgent, sentiment });
-    const { response, tokensIn, tokensOut } = await aiProvider.chat({ systemPrompt: agentContext, history, userMessage: userText });
+    const { response, tokensIn, tokensOut } = await agentProvider(selectedAgent).chat({ systemPrompt: agentContext, history, userMessage: userText });
     totalTokensIn += tokensIn;
     totalTokensOut += tokensOut;
     finalResponse = response;

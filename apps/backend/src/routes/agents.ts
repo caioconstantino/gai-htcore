@@ -13,6 +13,8 @@ const agentSchema = z.object({
   prompt: z.string().max(12000).default(""),
   triggerKeywords: z.array(z.string()).default([]),
   isActive: z.boolean().default(true),
+  aiProvider: z.string().max(50).nullable().optional(),
+  aiModel: z.string().max(100).nullable().optional(),
 });
 
 /** Map well-known variable names to company fields for auto-fill. */

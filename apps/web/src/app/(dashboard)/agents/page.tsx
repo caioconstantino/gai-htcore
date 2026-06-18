@@ -26,6 +26,7 @@ interface Agent {
   id: string; name: string; description: string | null; type: string; scope: string;
   isActive: boolean; triggerKeywords: string[]; prompt: string; promptVersion: number;
   templateId: string | null; dynamicFields: DynamicField[];
+  aiProvider?: string | null; aiModel?: string | null;
   company?: { id: string; name: string; slug: string } | null;
 }
 interface PromptVersion { id: string; version: number; prompt: string; label: string | null; createdAt: string; }
@@ -199,6 +200,79 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
   );
 }
 
+// ── AI Model selector + cost estimator ───────────────────────────────────────
+const AI_MODELS = [
+  { provider: "openai", value: "gpt-4o-mini",      label: "GPT-4o Mini",    badge: "Econômico",   badgeColor: "green",  inputPer1M: 0.15,  outputPer1M: 0.60  },
+  { provider: "openai", value: "gpt-4o",           label: "GPT-4o",         badge: "Recomendado", badgeColor: "blue",   inputPer1M: 2.50,  outputPer1M: 10.00 },
+  { provider: "openai", value: "gpt-4-turbo",      label: "GPT-4 Turbo",    badge: "Avançado",    badgeColor: "violet", inputPer1M: 10.00, outputPer1M: 30.00 },
+  { provider: "openai", value: "gpt-3.5-turbo",    label: "GPT-3.5 Turbo",  badge: "Legado",      badgeColor: "gray",   inputPer1M: 0.50,  outputPer1M: 1.50  },
+] as const;
+
+function estimateCost(modelValue: string | null | undefined, promptLength: number) {
+  const model = AI_MODELS.find((m) => m.value === modelValue);
+  if (!model) return null;
+  // Rough estimates: prompt tokens + ~600 context/history; output ~300 tokens
+  const estimatedInput = Math.ceil(promptLength / 4) + 600;
+  const estimatedOutput = 300;
+  const costUSD = (estimatedInput * model.inputPer1M + estimatedOutput * model.outputPer1M) / 1_000_000;
+  return { costUSD, estimatedInput, estimatedOutput };
+}
+
+function ModelSelector({
+  value, onChange, promptLength, defaultLabel = "Padrão da empresa",
+}: {
+  value: string | null | undefined;
+  onChange: (v: string | null) => void;
+  promptLength: number;
+  defaultLabel?: string;
+}) {
+  const selected = AI_MODELS.find((m) => m.value === value);
+  const cost = selected ? estimateCost(value, promptLength) : null;
+
+  return (
+    <Box>
+      <Select
+        label="Modelo de IA"
+        description="Deixe em branco para usar o modelo padrão da empresa"
+        placeholder={defaultLabel}
+        clearable
+        value={value ?? null}
+        onChange={onChange}
+        data={AI_MODELS.map((m) => ({
+          value: m.value,
+          label: m.label,
+        }))}
+        renderOption={({ option }) => {
+          const m = AI_MODELS.find((x) => x.value === option.value);
+          if (!m) return <Text size="sm">{option.label}</Text>;
+          return (
+            <Group justify="space-between" w="100%" wrap="nowrap">
+              <Text size="sm" fw={500}>{m.label}</Text>
+              <Group gap={4}>
+                <Badge size="xs" color={m.badgeColor} variant="light">{m.badge}</Badge>
+                <Text size="xs" c="dimmed">${m.inputPer1M}/1M in</Text>
+              </Group>
+            </Group>
+          );
+        }}
+      />
+      {cost && (
+        <Paper mt="xs" p="xs" radius="md" style={{ background: "var(--mantine-color-blue-0)", border: "1px solid var(--mantine-color-blue-2)" }}>
+          <Group gap="xs" wrap="wrap">
+            <Text size="xs" fw={600} c="blue">Custo estimado por mensagem:</Text>
+            <Badge size="sm" color="blue" variant="filled">${cost.costUSD.toFixed(5)}</Badge>
+            <Text size="xs" c="dimmed">≈ R$ {(cost.costUSD * 5.5).toFixed(4)}</Text>
+            <Text size="xs" c="dimmed">({cost.estimatedInput} tokens entrada + {cost.estimatedOutput} saída)</Text>
+          </Group>
+        </Paper>
+      )}
+      {!value && (
+        <Text size="xs" c="dimmed" mt={4}>Usando modelo configurado na empresa.</Text>
+      )}
+    </Box>
+  );
+}
+
 // ── Full prompt editor (super_admin only) ─────────────────────────────────────
 function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void }) {
   const qc = useQueryClient();
@@ -206,12 +280,15 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
 
   const [promptText, setPromptText] = useState(agent.prompt);
   const [keywords, setKeywords] = useState<string[]>(agent.triggerKeywords);
+  const [aiModel, setAiModel] = useState<string | null>((agent as Agent & { aiModel?: string | null }).aiModel ?? null);
   const [kwInput, setKwInput] = useState("");
   const [saveLabel, setSaveLabel] = useState("");
   const [showSaveLabel, setShowSaveLabel] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
 
-  const isDirty = promptText !== agent.prompt || JSON.stringify(keywords) !== JSON.stringify(agent.triggerKeywords);
+  const isDirty = promptText !== agent.prompt
+    || JSON.stringify(keywords) !== JSON.stringify(agent.triggerKeywords)
+    || aiModel !== ((agent as Agent & { aiModel?: string | null }).aiModel ?? null);
 
   const { data: versions, isLoading: versionsLoading } = useQuery<PromptVersion[]>({
     queryKey: ["prompt-versions", agent.id],
@@ -219,7 +296,8 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
   });
 
   const saveMutation = useMutation({
-    mutationFn: () => api.post(`/agents/${agent.id}/prompt-versions`, { prompt: promptText, label: saveLabel.trim() || undefined, keywords }),
+    mutationFn: () => api.post(`/agents/${agent.id}/prompt-versions`, { prompt: promptText, label: saveLabel.trim() || undefined, keywords })
+      .then(() => api.patch(`/agents/${agent.id}`, { aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null })),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
       qc.invalidateQueries({ queryKey: ["prompt-versions", agent.id] });
@@ -343,7 +421,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
             </Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}>
-            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} />
+            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
           </Tabs.Panel>
           <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <HistorySidebar />
@@ -352,7 +430,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
       ) : (
         <Box style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
           <Box style={{ flex: 1, overflow: "auto" }}>
-            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} />
+            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
           </Box>
           <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <HistorySidebar />
@@ -363,11 +441,12 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
   );
 }
 
-function EditorPanel({ promptText, setPromptText, keywords, setKeywords, kwInput, setKwInput, addKeyword, vars }: {
+function EditorPanel({ promptText, setPromptText, keywords, setKeywords, kwInput, setKwInput, addKeyword, vars, aiModel, setAiModel }: {
   promptText: string; setPromptText: (v: string) => void;
   keywords: string[]; setKeywords: (fn: (prev: string[]) => string[]) => void;
   kwInput: string; setKwInput: (v: string) => void;
   addKeyword: () => void; vars: string[];
+  aiModel: string | null; setAiModel: (v: string | null) => void;
 }) {
   return (
     <Stack gap="md" p="md">
@@ -410,6 +489,9 @@ function EditorPanel({ promptText, setPromptText, keywords, setKeywords, kwInput
           <Button size="xs" variant="light" onClick={addKeyword} disabled={!kwInput.trim()}><IconPlus size={13} /></Button>
         </Group>
       </Box>
+
+      <Divider label="Modelo de IA" labelPosition="left" />
+      <ModelSelector value={aiModel} onChange={setAiModel} promptLength={promptText.length} />
     </Stack>
   );
 }

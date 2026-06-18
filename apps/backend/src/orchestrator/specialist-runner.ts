@@ -22,6 +22,8 @@ export async function runSpecialist(input: {
   userMessage: string;
   history: ChatMessage[];
   aiProvider: AIProvider;
+  /** If provided, overrides aiProvider for this specific specialist's model. */
+  getProvider?: (agent: Agent) => AIProvider;
   sentiment: string;
   onLog?: OnLog;
   /**
@@ -30,7 +32,8 @@ export async function runSpecialist(input: {
    */
   directMode?: boolean;
 }): Promise<SpecialistResult> {
-  const { specialist, company, lead, conversation, userMessage, history, aiProvider, sentiment, onLog, directMode } = input;
+  const { specialist, company, lead, conversation, userMessage, history, sentiment, onLog, directMode } = input;
+  const aiProvider = input.getProvider ? input.getProvider(specialist) : input.aiProvider;
 
   await onLog?.(specialist.name, directMode ? "Respondendo diretamente ao cliente..." : "Consultado pelo orquestrador — analisando...");
 

@@ -23,6 +23,7 @@ interface AgentTemplate {
   id: string; name: string; description: string | null; type: string;
   scope: string; isActive: boolean; triggerKeywords: string[];
   prompt: string; promptVersion: number; dynamicFields: DynamicField[];
+  aiProvider?: string | null; aiModel?: string | null;
   _count?: { instances: number };
 }
 interface PromptVersion { id: string; version: number; prompt: string; label: string | null; createdAt: string; }
@@ -111,6 +112,58 @@ function DynamicFieldsEditor({ fields, onChange }: { fields: DynamicField[]; onC
   );
 }
 
+// ── AI model selector ─────────────────────────────────────────────────────────
+const AI_MODELS = [
+  { provider: "openai", value: "gpt-4o-mini",   label: "GPT-4o Mini",   badge: "Econômico",   badgeColor: "green",  inputPer1M: 0.15,  outputPer1M: 0.60  },
+  { provider: "openai", value: "gpt-4o",         label: "GPT-4o",        badge: "Recomendado", badgeColor: "blue",   inputPer1M: 2.50,  outputPer1M: 10.00 },
+  { provider: "openai", value: "gpt-4-turbo",    label: "GPT-4 Turbo",   badge: "Avançado",    badgeColor: "violet", inputPer1M: 10.00, outputPer1M: 30.00 },
+  { provider: "openai", value: "gpt-3.5-turbo",  label: "GPT-3.5 Turbo", badge: "Legado",      badgeColor: "gray",   inputPer1M: 0.50,  outputPer1M: 1.50  },
+] as const;
+
+function ModelSelector({ value, onChange, promptLength }: { value: string | null | undefined; onChange: (v: string | null) => void; promptLength: number }) {
+  const model = AI_MODELS.find((m) => m.value === value);
+  const cost = model ? (() => {
+    const estimatedInput = Math.ceil(promptLength / 4) + 600;
+    const estimatedOutput = 300;
+    const costUSD = (estimatedInput * model.inputPer1M + estimatedOutput * model.outputPer1M) / 1_000_000;
+    return { costUSD, estimatedInput, estimatedOutput };
+  })() : null;
+  return (
+    <Box>
+      <Select
+        label="Modelo de IA"
+        description="Deixe em branco para usar o modelo padrão da empresa que ativar o template"
+        placeholder="Padrão da empresa"
+        clearable value={value ?? null} onChange={onChange}
+        data={AI_MODELS.map((m) => ({ value: m.value, label: m.label }))}
+        renderOption={({ option }) => {
+          const m = AI_MODELS.find((x) => x.value === option.value);
+          if (!m) return <Text size="sm">{option.label}</Text>;
+          return (
+            <Group justify="space-between" w="100%" wrap="nowrap">
+              <Text size="sm" fw={500}>{m.label}</Text>
+              <Group gap={4}>
+                <Badge size="xs" color={m.badgeColor} variant="light">{m.badge}</Badge>
+                <Text size="xs" c="dimmed">${m.inputPer1M}/1M</Text>
+              </Group>
+            </Group>
+          );
+        }}
+      />
+      {cost && (
+        <Paper mt="xs" p="xs" radius="md" style={{ background: "var(--mantine-color-blue-0)", border: "1px solid var(--mantine-color-blue-2)" }}>
+          <Group gap="xs" wrap="wrap">
+            <Text size="xs" fw={600} c="blue">Custo estimado por mensagem:</Text>
+            <Badge size="sm" color="blue" variant="filled">${cost.costUSD.toFixed(5)}</Badge>
+            <Text size="xs" c="dimmed">≈ R$ {(cost.costUSD * 5.5).toFixed(4)}</Text>
+            <Text size="xs" c="dimmed">({cost.estimatedInput} tokens entrada + {cost.estimatedOutput} saída)</Text>
+          </Group>
+        </Paper>
+      )}
+    </Box>
+  );
+}
+
 // ── Template drawer editor ─────────────────────────────────────────────────────
 function TemplateEditor({
   template, onClose,
@@ -130,6 +183,7 @@ function TemplateEditor({
   const [promptText, setPromptText] = useState(template?.prompt ?? "");
   const [keywords, setKeywords] = useState<string[]>(template?.triggerKeywords ?? []);
   const [dynamicFields, setDynamicFields] = useState<DynamicField[]>((template?.dynamicFields ?? []) as DynamicField[]);
+  const [aiModel, setAiModel] = useState<string | null>(template?.aiModel ?? null);
   const [saveLabel, setSaveLabel] = useState("");
   const [showSaveLabel, setShowSaveLabel] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
@@ -148,7 +202,7 @@ function TemplateEditor({
   });
 
   const createMutation = useMutation({
-    mutationFn: () => api.post("/agent-templates", { name, description, type, scope, prompt: promptText, triggerKeywords: keywords, dynamicFields, isActive }),
+    mutationFn: () => api.post("/agent-templates", { name, description, type, scope, prompt: promptText, triggerKeywords: keywords, dynamicFields, isActive, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agent-templates"] });
       notifications.show({ message: "Template criado!", color: "green" });
@@ -164,7 +218,7 @@ function TemplateEditor({
       keywords,
     }).then(() =>
       // Also update name, description, type, scope, isActive, dynamicFields via patch
-      api.patch(`/agent-templates/${template!.id}`, { name, description, type, scope, isActive, dynamicFields, triggerKeywords: keywords })
+      api.patch(`/agent-templates/${template!.id}`, { name, description, type, scope, isActive, dynamicFields, triggerKeywords: keywords, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null })
     ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agent-templates"] });
@@ -288,6 +342,9 @@ function TemplateEditor({
 
         <Divider label="Campos dinâmicos" labelPosition="left" />
         <DynamicFieldsEditor fields={dynamicFields} onChange={setDynamicFields} />
+
+        <Divider label="Modelo de IA" labelPosition="left" />
+        <ModelSelector value={aiModel} onChange={setAiModel} promptLength={promptText.length} />
 
         <Divider label="Ativação" labelPosition="left" />
         <TagsInput label="Palavras-chave de ativação" placeholder="Digite e pressione Enter"

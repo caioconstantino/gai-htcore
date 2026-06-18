@@ -81,6 +81,8 @@ model Agent {
   scope           String   @default("external")
   prompt          String
   promptVersion   Int      @default(1)
+  aiProvider      String?                         // null = use company default
+  aiModel         String?                         // null = use company default
   isActive        Boolean  @default(true)
   triggerKeywords String[] @default([])
   requiredFields  String[] @default([])

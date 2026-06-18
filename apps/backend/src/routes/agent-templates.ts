@@ -24,6 +24,8 @@ const templateSchema = z.object({
   triggerKeywords: z.array(z.string()).default([]),
   dynamicFields: z.array(dynamicFieldSchema).default([]),
   isActive: z.boolean().default(true),
+  aiProvider: z.string().max(50).nullable().optional(),
+  aiModel: z.string().max(100).nullable().optional(),
 });
 
 // All authenticated users can browse templates
