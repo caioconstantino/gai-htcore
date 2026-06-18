@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, SimpleGrid, Skeleton,
-  ThemeIcon, Modal, TextInput, Textarea, ActionIcon, Menu,
+  ThemeIcon, Modal, TextInput, Textarea, ActionIcon, Menu, Select,
   Tabs, Divider, Drawer, ScrollArea, Paper, Tooltip, Alert,
   Loader, Center, Collapse,
 } from "@mantine/core";
@@ -26,6 +26,7 @@ interface Agent {
   id: string; name: string; description: string | null; type: string; scope: string;
   isActive: boolean; triggerKeywords: string[]; prompt: string; promptVersion: number;
   templateId: string | null; dynamicFields: DynamicField[];
+  company?: { id: string; name: string; slug: string } | null;
 }
 interface PromptVersion { id: string; version: number; prompt: string; label: string | null; createdAt: string; }
 interface DynamicValuesData { fields: DynamicField[]; values: Record<string, string>; autoFill: Record<string, string>; templateId: string | null; }
@@ -421,6 +422,7 @@ export default function AgentsPage() {
 
   const [activating, setActivating] = useState<AgentTemplate | null>(null);
   const [editing, setEditing] = useState<Agent | null>(null);
+  const [companyFilter, setCompanyFilter] = useState<string | null>(null);
   const qc = useQueryClient();
 
   const { data: agentsData, isLoading: loadingAgents } = useQuery<{ data: Agent[] }>({
@@ -443,8 +445,18 @@ export default function AgentsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["agents"] }); notifications.show({ message: "Agente removido", color: "orange" }); },
   });
 
-  const agents = agentsData?.data ?? [];
-  const templates = (templatesData?.data ?? []).filter((t) => !agents.some((a) => a.templateId === t.id && a.isActive));
+  const allAgents = agentsData?.data ?? [];
+
+  // Build unique company list for super_admin filter dropdown
+  const companies = isSuperAdmin
+    ? Array.from(new Map(allAgents.filter((a) => a.company).map((a) => [a.company!.id, a.company!])).values())
+    : [];
+
+  const agents = isSuperAdmin && companyFilter
+    ? allAgents.filter((a) => a.company?.id === companyFilter)
+    : allAgents;
+
+  const templates = (templatesData?.data ?? []).filter((t) => !allAgents.some((a) => a.templateId === t.id && a.isActive));
   const hasOrchestrator = agents.some((a) => a.type === "orchestrator" && a.isActive);
 
   const drawerTitle = editing
@@ -461,6 +473,18 @@ export default function AgentsPage() {
       </Box>
 
       {activating && <ActivateModal template={activating} onClose={() => setActivating(null)} />}
+
+      {isSuperAdmin && companies.length > 0 && (
+        <Select
+          placeholder="Filtrar por empresa (todas)"
+          data={companies.map((c) => ({ value: c.id, label: c.name }))}
+          value={companyFilter}
+          onChange={setCompanyFilter}
+          clearable
+          leftSection={<IconWorld size={15} />}
+          maw={320}
+        />
+      )}
 
       {!isSuperAdmin && !loadingAgents && !hasOrchestrator && (
         <Alert icon={<IconCrown size={16} />} color="orange" radius="md" title="Orquestrador não configurado">
@@ -544,6 +568,9 @@ export default function AgentsPage() {
                   {agent.description && <Text size="xs" c="dimmed" mb="sm" lineClamp={2}>{agent.description}</Text>}
 
                   <Group gap="xs" mb="sm">
+                    {isSuperAdmin && agent.company && (
+                      <Badge color="gray" variant="dot" size="xs">{agent.company.name}</Badge>
+                    )}
                     <Badge color={typeColors[agent.type] ?? "gray"} variant="light" size="xs">{typeLabels[agent.type] ?? agent.type}</Badge>
                     <Badge color="gray" variant="outline" size="xs" leftSection={agent.scope === "external" ? <IconWorld size={10} /> : <IconLock size={10} />}>
                       {agent.scope === "external" ? "WhatsApp" : "Interno"}

@@ -28,10 +28,18 @@ function companyAutoFill(company: { name: string; slug: string }): Record<string
 
 agentsRouter.get("/", async (req: AuthRequest, res, next) => {
   try {
-    const companyId = req.user?.role === "super_admin" ? undefined : req.user?.companyId;
+    const isSuperAdmin = req.user?.role === "super_admin";
+    const companyId = isSuperAdmin ? undefined : req.user?.companyId;
+
     const agents = await prisma.agent.findMany({
-      where: companyId ? { companyId } : {},
-      orderBy: { name: "asc" },
+      where: {
+        isTemplate: false,
+        ...(companyId ? { companyId } : {}),
+      },
+      include: isSuperAdmin
+        ? { company: { select: { id: true, name: true, slug: true } } }
+        : undefined,
+      orderBy: [{ companyId: "asc" }, { type: "asc" }, { name: "asc" }],
     });
     res.json({ data: agents, total: agents.length });
   } catch (err) { next(err); }
