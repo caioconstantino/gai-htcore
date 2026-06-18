@@ -304,7 +304,7 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
             <Text size="xs" c="dimmed" mb="md">
               Selecione quais dados o agente deve coletar. Campos personalizados são armazenados no contexto do lead.
             </Text>
-            {CollectFieldsEditor({ value: collectFields, onChange: setCollectFields })}
+            <CollectFieldsEditor value={collectFields} onChange={setCollectFields} />
           </Box>
           <Divider />
         </>
