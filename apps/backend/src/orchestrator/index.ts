@@ -243,6 +243,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
       },
     }),
     prisma.company.update({ where: { id: companyId }, data: { tokensUsed: { increment: totalTokens } } }),
+    prisma.conversation.update({ where: { id: convId }, data: { totalTokensUsed: { increment: totalTokens } } }),
     prisma.tokenUsageLog.create({
       data: {
         companyId,

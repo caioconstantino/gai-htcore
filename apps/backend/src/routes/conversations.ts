@@ -27,12 +27,19 @@ conversationsRouter.get("/", async (req: AuthRequest, res, next) => {
           lead: { select: { id: true, name: true, phone: true } },
           currentAgent: { select: { id: true, name: true } },
           _count: { select: { messages: true } },
+          messages: { select: { tokensUsed: true } },
         },
       }),
       prisma.conversation.count({ where }),
     ]);
 
-    res.json({ data: conversations, total, page, limit });
+    // Compute totalTokensUsed from messages (accurate even for historical convs where the field is 0)
+    const enriched = conversations.map(({ messages, ...conv }) => ({
+      ...conv,
+      totalTokensUsed: messages.reduce((sum, m) => sum + (m.tokensUsed ?? 0), 0),
+    }));
+
+    res.json({ data: enriched, total, page, limit });
   } catch (err) { next(err); }
 });
 
