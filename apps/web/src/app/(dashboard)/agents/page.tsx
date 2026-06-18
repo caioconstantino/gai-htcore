@@ -273,6 +273,7 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
       qc.invalidateQueries({ queryKey: ["prompt-versions", agent.id] });
+      qc.invalidateQueries({ queryKey: ["dynamic-values", agent.id] });
       notifications.show({ message: "Configurações salvas com sucesso!", color: "green", icon: <IconCheck size={16} /> });
     },
     onError: (err: unknown) => {
