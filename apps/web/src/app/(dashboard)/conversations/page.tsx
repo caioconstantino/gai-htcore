@@ -7,6 +7,7 @@ import {
   Select, Drawer, Divider, ScrollArea, Paper, TextInput, ActionIcon,
   Tooltip, Tabs, Timeline, ThemeIcon,
 } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import {
   IconMessageCircle, IconRobot, IconUser, IconFilter,
   IconSend, IconRefresh, IconMessages, IconBinaryTree2,
@@ -141,6 +142,7 @@ export default function ConversationsPage() {
   const [manualText, setManualText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const logScrollRef = useRef<HTMLDivElement>(null);
+  const isMobile = useMediaQuery("(max-width: 768px)") ?? false;
 
   const { data, isLoading } = useQuery<{ data: Conversation[] }>({
     queryKey: ["conversations"],
@@ -190,14 +192,14 @@ export default function ConversationsPage() {
 
   return (
     <Stack gap="lg" maw={1200}>
-      <Group justify="space-between" align="flex-end">
+      <Group justify="space-between" align="flex-end" wrap="nowrap">
         <Box>
-          <Title order={2} fw={700}>Conversas</Title>
+          <Title order={isMobile ? 3 : 2} fw={700}>Conversas</Title>
           <Text c="dimmed" size="sm" mt={4}>{conversations.length} conversas</Text>
         </Box>
         <Select
           data={statusOptions} value={statusFilter} onChange={setStatusFilter}
-          leftSection={<IconFilter size={14} />} style={{ width: 200 }} size="sm"
+          leftSection={<IconFilter size={14} />} style={{ width: isMobile ? 150 : 200 }} size="sm"
         />
       </Group>
 
@@ -206,7 +208,7 @@ export default function ConversationsPage() {
         opened={!!selected}
         onClose={() => setSelected(null)}
         position="right"
-        size="lg"
+        size={isMobile ? "100%" : "lg"}
         title={
           <Group gap="xs" wrap="nowrap">
             <Text fw={600} truncate>
@@ -332,10 +334,10 @@ export default function ConversationsPage() {
           {conversations.map((conv, i) => (
             <Box
               key={conv.id}
-              px="lg" py="md"
+              px={isMobile ? "md" : "lg"} py="md"
               onClick={() => setSelected(conv.id)}
               style={{
-                display: "flex", alignItems: "center", gap: 16, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: isMobile ? 12 : 16, cursor: "pointer",
                 transition: "background 0.1s",
                 borderBottom: i < conversations.length - 1 ? "1px solid var(--mantine-color-gray-1)" : "none",
                 background: selected === conv.id ? "var(--mantine-color-blue-0)" : "transparent",
@@ -343,22 +345,25 @@ export default function ConversationsPage() {
               onMouseEnter={(e) => { if (selected !== conv.id) e.currentTarget.style.background = "var(--mantine-color-gray-0)"; }}
               onMouseLeave={(e) => { if (selected !== conv.id) e.currentTarget.style.background = "transparent"; }}
             >
-              <Avatar radius="xl" size={40} color={conv.handedOffToHuman ? "orange" : "violet"}>
-                {conv.handedOffToHuman ? <IconUser size={18} /> : <IconRobot size={18} />}
+              <Avatar radius="xl" size={isMobile ? 34 : 40} color={conv.handedOffToHuman ? "orange" : "violet"}>
+                {conv.handedOffToHuman ? <IconUser size={16} /> : <IconRobot size={16} />}
               </Avatar>
               <Box style={{ flex: 1, minWidth: 0 }}>
                 <Text size="sm" fw={500} truncate>{conv.lead.name ?? conv.lead.phone}</Text>
                 <Group gap="xs" mt={2}>
-                  {conv.currentAgent && <Text size="xs" c="dimmed">{conv.currentAgent.name}</Text>}
-                  <Text size="xs" c="dimmed">· {conv._count.messages} msgs · {conv.totalTokensUsed} tokens</Text>
+                  {!isMobile && conv.currentAgent && <Text size="xs" c="dimmed">{conv.currentAgent.name}</Text>}
+                  <Text size="xs" c="dimmed">{conv._count.messages} msgs</Text>
+                  {!isMobile && <Text size="xs" c="dimmed">· {conv.totalTokensUsed} tokens</Text>}
                 </Group>
               </Box>
-              <Group gap="sm">
-                {conv.handedOffToHuman && <Badge color="orange" variant="light" size="sm">Humano</Badge>}
-                <Badge color={conv.isActive ? "green" : "gray"} variant="light" size="sm">
-                  {conv.isActive ? "Ativa" : "Encerrada"}
+              <Group gap="xs">
+                {conv.handedOffToHuman && (
+                  <Badge color="orange" variant="light" size="xs">{isMobile ? "👤" : "Humano"}</Badge>
+                )}
+                <Badge color={conv.isActive ? "green" : "gray"} variant="light" size="xs">
+                  {conv.isActive ? "Ativa" : "Enc."}
                 </Badge>
-                <Text size="xs" c="dimmed">{new Date(conv.updatedAt).toLocaleDateString("pt-BR")}</Text>
+                {!isMobile && <Text size="xs" c="dimmed">{new Date(conv.updatedAt).toLocaleDateString("pt-BR")}</Text>}
               </Group>
             </Box>
           ))}

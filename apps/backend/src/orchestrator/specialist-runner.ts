@@ -24,10 +24,15 @@ export async function runSpecialist(input: {
   aiProvider: AIProvider;
   sentiment: string;
   onLog?: OnLog;
+  /**
+   * When true, the specialist responds directly to the client (no synthesizer needed).
+   * Use when only one specialist is selected — saves one AI round-trip.
+   */
+  directMode?: boolean;
 }): Promise<SpecialistResult> {
-  const { specialist, company, lead, conversation, userMessage, history, aiProvider, sentiment, onLog } = input;
+  const { specialist, company, lead, conversation, userMessage, history, aiProvider, sentiment, onLog, directMode } = input;
 
-  await onLog?.(specialist.name, "Consultado pelo orquestrador — analisando...");
+  await onLog?.(specialist.name, directMode ? "Respondendo diretamente ao cliente..." : "Consultado pelo orquestrador — analisando...");
 
   const baseContext = await buildAgentContext({
     company: company as Parameters<typeof buildAgentContext>[0]["company"],
@@ -37,7 +42,9 @@ export async function runSpecialist(input: {
     sentiment,
   });
 
-  const specialistPrompt = `${baseContext}
+  const specialistPrompt = directMode
+    ? baseContext
+    : `${baseContext}
 
 ---
 MODO ESPECIALISTA: Você está sendo consultado pelo agente orquestrador, NÃO pelo cliente diretamente.
@@ -54,7 +61,7 @@ Forneça sua análise e recomendação de resposta para o orquestrador sintetiza
       userMessage,
     });
 
-    logger.debug(`Specialist "${specialist.name}" responded`, { tokens: tokensIn + tokensOut });
+    logger.debug(`Specialist "${specialist.name}" responded`, { tokens: tokensIn + tokensOut, directMode });
     await onLog?.(specialist.name, response, { tokensIn, tokensOut });
 
     return { specialistId: specialist.id, specialistName: specialist.name, specialistType: specialist.type, response, tokensIn, tokensOut };

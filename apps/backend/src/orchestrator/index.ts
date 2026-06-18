@@ -21,10 +21,14 @@ export interface OrchestratorInput {
 export async function orchestrate(input: OrchestratorInput): Promise<string> {
   const { companyId, from, message } = input;
 
-  const company = await prisma.company.findUnique({
-    where: { id: companyId },
-    include: { commercialRules: true },
-  });
+  // Parallelize independent DB queries — agents don't need company result
+  const [company, allAgents] = await Promise.all([
+    prisma.company.findUnique({
+      where: { id: companyId },
+      include: { commercialRules: true },
+    }),
+    prisma.agent.findMany({ where: { companyId, isActive: true } }),
+  ]);
 
   if (!company || !company.isActive) {
     logger.warn(`Company ${companyId} not found or inactive`);
@@ -36,6 +40,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     return "Nosso atendimento está temporariamente indisponível. Por favor, entre em contato pelo telefone.";
   }
 
+  // Lead upsert — needs companyId (from input, not company query)
   const lead = await prisma.lead.upsert({
     where: { companyId_phone: { companyId, phone: from } },
     create: { companyId, phone: from, source: "whatsapp" },
@@ -57,34 +62,34 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
 
   const userText = message.text?.body ?? "";
   const convId = conversation.id;
-
   const logCtx = { companyId, conversationId: convId, leadPhone: from };
 
-  await orchLog({ ...logCtx, step: "client_message", actor: `Cliente (${from})`, message: userText });
+  // Parallelize: save message + fetch history + log (all independent)
+  const [, cachedHistoryRaw] = await Promise.all([
+    orchLog({ ...logCtx, step: "client_message", actor: `Cliente (${from})`, message: userText }),
+    redis.get(`conv:${convId}:history`),
+    prisma.message.create({
+      data: {
+        companyId,
+        leadId: lead.id,
+        conversationId: convId,
+        direction: "inbound",
+        content: userText,
+        type: "text",
+        whatsappMessageId: message.id,
+        status: "delivered",
+      },
+    }),
+  ]);
 
-  await prisma.message.create({
-    data: {
-      companyId,
-      leadId: lead.id,
-      conversationId: convId,
-      direction: "inbound",
-      content: userText,
-      type: "text",
-      whatsappMessageId: message.id,
-      status: "delivered",
-    },
-  });
-
-  const cacheKey = `conv:${convId}:history`;
-  const cachedHistory = await redis.get(cacheKey);
-  const history: Array<{ role: "user" | "assistant" | "system"; content: string }> = cachedHistory
-    ? JSON.parse(cachedHistory)
+  const history: Array<{ role: "user" | "assistant" | "system"; content: string }> = cachedHistoryRaw
+    ? JSON.parse(cachedHistoryRaw)
     : [];
 
-  const sentiment = await analyzeSentiment(userText);
+  // Sentiment is a fast keyword check — no await needed, runs sync
+  const sentiment = analyzeSentiment(userText);
   const aiProvider = AIProviderFactory.create(company.aiProvider, company.aiModel);
 
-  const allAgents = await prisma.agent.findMany({ where: { companyId, isActive: true } });
   const orchestratorAgent = allAgents.find((a) => a.type === "orchestrator");
   const specialists = allAgents.filter((a) => a.type !== "orchestrator" && a.scope === "external");
 
@@ -102,51 +107,86 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
       metadata: { specialists: specialists.map((s) => s.name) },
     });
 
-    // 1. Router
+    // 1. Router — determine which specialists to call (or detect out-of-scope)
     await orchLog({ ...logCtx, step: "router", actor: "Router (IA)", message: "Analisando mensagem para selecionar especialistas..." });
-    const selectedSpecialists = await routeToSpecialists(userText, specialists, aiProvider);
-    await orchLog({
-      ...logCtx,
-      step: "router",
-      actor: "Router (IA)",
-      message: `Especialistas selecionados: ${selectedSpecialists.map((s) => s.name).join(", ")}`,
-      metadata: { selected: selectedSpecialists.map((s) => ({ id: s.id, name: s.name })) },
-    });
+    const routerResult = await routeToSpecialists(userText, specialists, aiProvider);
 
-    // 2. Especialistas em paralelo
-    const specialistResults = await runSpecialistsInParallel(selectedSpecialists, {
-      company,
-      lead,
-      conversation,
-      userMessage: userText,
-      history,
-      aiProvider,
-      sentiment,
-      onLog: async (name, msg, meta) => {
-        await orchLog({ ...logCtx, step: "specialist", actor: `Especialista: ${name}`, message: msg, metadata: meta });
-      },
-    });
+    // Out-of-scope: none of the specialists can handle this topic
+    if (routerResult.outOfScope) {
+      const scopeNames = specialists.map((s) => s.name).join(", ");
+      const outOfScopeReply = buildOutOfScopeReply(orchestratorAgent.prompt, scopeNames, routerResult.outOfScopeReason);
 
-    specialistResults.forEach((r) => {
-      totalTokensIn += r.tokensIn;
-      totalTokensOut += r.tokensOut;
-    });
+      await orchLog({
+        ...logCtx,
+        step: "router",
+        actor: "Router (IA)",
+        message: `Mensagem fora do escopo dos especialistas. Motivo: ${routerResult.outOfScopeReason ?? "tema não relacionado"}`,
+        metadata: { outOfScope: true, reason: routerResult.outOfScopeReason, specialists: specialists.map((s) => s.name) },
+      });
 
-    // 3. Síntese
-    await orchLog({ ...logCtx, step: "synthesizer", actor: `Orquestrador: ${orchestratorAgent.name}`, message: "Sintetizando respostas dos especialistas..." });
-    const synthPrompt = buildSynthesizerPrompt(orchestratorAgent.prompt, specialistResults);
-    const { response, tokensIn, tokensOut } = await aiProvider.chat({ systemPrompt: synthPrompt, history, userMessage: userText });
-    totalTokensIn += tokensIn;
-    totalTokensOut += tokensOut;
-    finalResponse = response;
+      finalResponse = outOfScopeReply;
+    } else {
+      const selectedSpecialists = routerResult.specialists;
 
-    await orchLog({
-      ...logCtx,
-      step: "synthesizer",
-      actor: `Orquestrador: ${orchestratorAgent.name}`,
-      message: "Resposta sintetizada pronta",
-      metadata: { tokensIn, tokensOut, preview: response.slice(0, 120) },
-    });
+      await orchLog({
+        ...logCtx,
+        step: "router",
+        actor: "Router (IA)",
+        message: `Especialistas selecionados: ${selectedSpecialists.map((s) => s.name).join(", ")}`,
+        metadata: { selected: selectedSpecialists.map((s) => ({ id: s.id, name: s.name })) },
+      });
+
+      // 2. Specialists in parallel
+      // Optimization: when only 1 specialist, use directMode to skip the synthesizer AI call
+      const directMode = selectedSpecialists.length === 1;
+
+      const specialistResults = await runSpecialistsInParallel(selectedSpecialists, {
+        company,
+        lead,
+        conversation,
+        userMessage: userText,
+        history,
+        aiProvider,
+        sentiment,
+        directMode,
+        onLog: async (name, msg, meta) => {
+          await orchLog({ ...logCtx, step: "specialist", actor: `Especialista: ${name}`, message: msg, metadata: meta });
+        },
+      });
+
+      specialistResults.forEach((r) => {
+        totalTokensIn += r.tokensIn;
+        totalTokensOut += r.tokensOut;
+      });
+
+      if (directMode) {
+        // Single specialist responded directly — no synthesizer needed
+        finalResponse = specialistResults[0]?.response ?? "";
+        await orchLog({
+          ...logCtx,
+          step: "synthesizer",
+          actor: `Especialista: ${selectedSpecialists[0].name}`,
+          message: "Resposta direta (sem síntese — especialista único)",
+          metadata: { preview: finalResponse.slice(0, 120) },
+        });
+      } else {
+        // 3. Synthesize multiple specialist responses
+        await orchLog({ ...logCtx, step: "synthesizer", actor: `Orquestrador: ${orchestratorAgent.name}`, message: "Sintetizando respostas dos especialistas..." });
+        const synthPrompt = buildSynthesizerPrompt(orchestratorAgent.prompt, specialistResults);
+        const { response, tokensIn, tokensOut } = await aiProvider.chat({ systemPrompt: synthPrompt, history, userMessage: userText });
+        totalTokensIn += tokensIn;
+        totalTokensOut += tokensOut;
+        finalResponse = response;
+
+        await orchLog({
+          ...logCtx,
+          step: "synthesizer",
+          actor: `Orquestrador: ${orchestratorAgent.name}`,
+          message: "Resposta sintetizada pronta",
+          metadata: { tokensIn, tokensOut, preview: response.slice(0, 120) },
+        });
+      }
+    }
   } else if (orchestratorAgent && specialists.length === 0) {
     await orchLog({ ...logCtx, step: "orchestrator", actor: `Orquestrador: ${orchestratorAgent.name}`, message: "Sem especialistas — respondendo diretamente" });
     const agentContext = await buildAgentContext({ company, lead, conversation, agent: orchestratorAgent, sentiment });
@@ -155,7 +195,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     totalTokensOut += tokensOut;
     finalResponse = response;
   } else {
-    // Fluxo legado
+    // Legacy flow (no orchestrator agent configured)
     const selectedAgent = await selectAgent({
       userMessage: userText,
       currentAgentId: conversation.currentAgentId ?? undefined,
@@ -184,7 +224,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
 
   history.push({ role: "user", content: userText });
   history.push({ role: "assistant", content: cleanResponse });
-  await redis.setex(cacheKey, 86400, JSON.stringify(history.slice(-20)));
+  await redis.setex(`conv:${convId}:history`, 86400, JSON.stringify(history.slice(-20)));
 
   const totalTokens = totalTokensIn + totalTokensOut;
 
@@ -236,6 +276,17 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   }
 
   return cleanResponse;
+}
+
+/**
+ * Build a polite out-of-scope reply that explains what we CAN help with.
+ */
+function buildOutOfScopeReply(orchestratorPrompt: string, specialistNames: string, reason?: string): string {
+  // Extract the business context from the orchestrator prompt (first 200 chars)
+  const context = orchestratorPrompt.slice(0, 200).replace(/\n/g, " ").trim();
+  void context; // used as context for future prompt enhancement
+
+  return `Desculpe, não consigo ajudar com esse assunto. Meu atendimento é focado em ${specialistNames}. Posso te ajudar com algo relacionado a isso?`;
 }
 
 function buildSynthesizerPrompt(orchestratorBasePrompt: string, specialistResults: SpecialistResult[]): string {

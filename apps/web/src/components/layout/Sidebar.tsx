@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/store/auth";
-import { Box, Stack, Text, ThemeIcon, UnstyledButton, Group, Avatar, Divider } from "@mantine/core";
+import { Box, Stack, Text, ThemeIcon, UnstyledButton, Group, Avatar } from "@mantine/core";
 import {
   IconLayoutDashboard, IconBuilding, IconUsers, IconCreditCard, IconCurrencyDollar,
   IconBolt, IconRobot, IconBook2, IconHeadset, IconFileSearch,
@@ -11,7 +11,6 @@ import {
   IconMessageCircle, IconPackage, IconFileText, IconLogout,
 } from "@tabler/icons-react";
 
-// Nav para usuários de empresa (não super_admin)
 const companyNav = [
   { href: "/dashboard", label: "Dashboard", icon: IconLayoutDashboard },
   { href: "/leads", label: "Leads", icon: IconUsers },
@@ -22,7 +21,6 @@ const companyNav = [
   { href: "/settings", label: "Configurações", icon: IconSettings },
 ];
 
-// Nav exclusivo do super_admin (Painel Master)
 const masterNav = [
   { href: "/dashboard", label: "Dashboard Executivo", icon: IconLayoutDashboard },
   { href: "/companies", label: "Empresas", icon: IconBuilding },
@@ -41,18 +39,19 @@ const masterNav = [
   { href: "/backups", label: "Backups", icon: IconCloudUpload },
 ];
 
-function NavItem({ href, label, icon: Icon, active }: {
-  href: string; label: string; icon: React.ElementType; active: boolean;
+function NavItem({ href, label, icon: Icon, active, onClick }: {
+  href: string; label: string; icon: React.ElementType; active: boolean; onClick?: () => void;
 }) {
   return (
     <UnstyledButton
       component={Link}
       href={href}
+      onClick={onClick}
       style={{
         display: "flex",
         alignItems: "center",
         gap: 10,
-        padding: "8px 10px",
+        padding: "9px 10px",
         borderRadius: 8,
         background: active ? "rgba(59,130,246,0.15)" : "transparent",
         color: active ? "#60a5fa" : "rgba(255,255,255,0.55)",
@@ -71,7 +70,11 @@ function NavItem({ href, label, icon: Icon, active }: {
   );
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  onNavigate?: () => void;
+}
+
+export function Sidebar({ onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuthStore();
@@ -81,7 +84,7 @@ export function Sidebar() {
   function handleLogout() { logout(); router.push("/login"); }
 
   return (
-    <Box style={{ width: 220, minHeight: "100vh", background: "#0f172a", display: "flex", flexDirection: "column", flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+    <Box style={{ width: 220, minHeight: "100%", background: "#0f172a", display: "flex", flexDirection: "column", flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.06)" }}>
       {/* Logo */}
       <Box p="md" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
         <Group gap="sm">
@@ -111,6 +114,7 @@ export function Sidebar() {
               key={item.href}
               {...item}
               active={pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"))}
+              onClick={onNavigate}
             />
           ))}
         </Stack>

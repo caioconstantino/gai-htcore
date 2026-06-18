@@ -5,8 +5,9 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import {
   Box, Card, Grid, Group, Text, Title, Stack, Badge,
-  Progress, RingProgress, SimpleGrid, Skeleton, ThemeIcon, Table,
+  Progress, RingProgress, SimpleGrid, Skeleton, ThemeIcon,
 } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import {
   IconUsers, IconMessageCircle, IconFileText, IconFlame,
   IconBolt, IconTrendingUp, IconBuilding, IconArrowUpRight,
@@ -44,6 +45,7 @@ const planColors: Record<string, string> = {
 export default function DashboardPage() {
   const { user } = useAuthStore();
   const isSuperAdmin = user?.role === "super_admin";
+  const isMobile = useMediaQuery("(max-width: 768px)") ?? false;
 
   const { data, isLoading } = useQuery<DashboardData>({
     queryKey: ["dashboard"],
@@ -70,63 +72,63 @@ export default function DashboardPage() {
 
   return (
     <Stack gap="lg" maw={1280}>
-      <Group justify="space-between" align="flex-end">
+      <Group justify="space-between" align="flex-end" wrap="nowrap">
         <Box>
-          <Title order={2} fw={700}>
+          <Title order={isMobile ? 3 : 2} fw={700}>
             {isSuperAdmin ? "Painel HT Core" : "Dashboard"}
           </Title>
-          <Text c="dimmed" size="sm" mt={4}>
-            {isSuperAdmin ? "Visão geral de toda a plataforma G.AI" : "Visão geral da operação comercial"}
-          </Text>
+          {!isMobile && (
+            <Text c="dimmed" size="sm" mt={4}>
+              {isSuperAdmin ? "Visão geral de toda a plataforma G.AI" : "Visão geral da operação comercial"}
+            </Text>
+          )}
         </Box>
-        <Badge color="green" variant="light" size="lg">
+        <Badge color="green" variant="light" size={isMobile ? "md" : "lg"}>
           <Group gap={6}>
             <Box w={7} h={7} style={{ borderRadius: "50%", background: "var(--mantine-color-green-6)" }} />
-            Ao vivo
+            {isMobile ? "" : "Ao vivo"}
           </Group>
         </Badge>
       </Group>
 
       {/* Super Admin KPIs */}
       {isSuperAdmin && (
-        <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+        <SimpleGrid cols={{ base: 2, sm: 4 }} spacing={isMobile ? "xs" : "md"}>
           {[
-            { label: "Total de Empresas", value: data?.totalCompanies ?? 0, sub: `${data?.activeCompanies ?? 0} ativas`, icon: IconBuilding, color: "blue", bg: "#eff6ff" },
-            { label: "Total de Leads", value: data?.totalLeads ?? 0, sub: "todas as empresas", icon: IconUsers, color: "violet", bg: "#f5f3ff" },
-            { label: "Conversas Ativas", value: data?.totalConversations ?? 0, sub: `${data?.handedOffConversations ?? 0} aguardando humano`, icon: IconMessageCircle, color: "teal", bg: "#f0fdfa" },
-            { label: "Usuários Ativos", value: data?.totalUsers ?? 0, sub: "excl. super admins", icon: IconUsers, color: "orange", bg: "#fff7ed" },
+            { label: "Empresas", value: data?.totalCompanies ?? 0, sub: `${data?.activeCompanies ?? 0} ativas`, icon: IconBuilding, color: "blue", bg: "#eff6ff" },
+            { label: "Leads", value: data?.totalLeads ?? 0, sub: "todas as empresas", icon: IconUsers, color: "violet", bg: "#f5f3ff" },
+            { label: "Conversas", value: data?.totalConversations ?? 0, sub: `${data?.handedOffConversations ?? 0} aguardando`, icon: IconMessageCircle, color: "teal", bg: "#f0fdfa" },
+            { label: "Usuários", value: data?.totalUsers ?? 0, sub: "ativos", icon: IconUsers, color: "orange", bg: "#fff7ed" },
           ].map(({ label, value, sub, icon: Icon, color, bg }) => (
-            <Card key={label} padding="lg" radius="lg" withBorder shadow="sm">
-              <Group justify="space-between" mb="sm">
-                <Box style={{ width: 40, height: 40, borderRadius: 10, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Icon size={20} color={`var(--mantine-color-${color}-6)`} />
+            <Card key={label} padding={isMobile ? "sm" : "lg"} radius="lg" withBorder shadow="sm">
+              <Group justify="space-between" mb={isMobile ? 4 : "sm"}>
+                <Box style={{ width: 32, height: 32, borderRadius: 8, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon size={16} color={`var(--mantine-color-${color}-6)`} />
                 </Box>
-                <IconArrowUpRight size={14} color="var(--mantine-color-green-6)" />
+                {!isMobile && <IconArrowUpRight size={14} color="var(--mantine-color-green-6)" />}
               </Group>
-              <Text size="xl" fw={800} lh={1}>{value}</Text>
-              <Text size="sm" c="dimmed" mt={2}>{label}</Text>
-              <Text size="xs" c="dimmed" mt={2}>{sub}</Text>
+              <Text size={isMobile ? "lg" : "xl"} fw={800} lh={1}>{value}</Text>
+              <Text size="xs" c="dimmed" mt={2}>{label}</Text>
+              {!isMobile && <Text size="xs" c="dimmed" mt={2}>{sub}</Text>}
             </Card>
           ))}
         </SimpleGrid>
       )}
 
       {/* Lead KPIs */}
-      <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+      <SimpleGrid cols={{ base: 2, sm: 4 }} spacing={isMobile ? "xs" : "md"}>
         {[
           { label: "Leads", value: data?.totalLeads ?? 0, icon: IconUsers, color: "blue", bg: "#eff6ff" },
           { label: "Leads Quentes", value: data?.hotLeads ?? 0, icon: IconFlame, color: "orange", bg: "#fff7ed" },
           { label: "Conversas", value: data?.totalConversations ?? 0, icon: IconMessageCircle, color: "violet", bg: "#f5f3ff" },
-          { label: "Orçamentos Enviados", value: data?.pendingQuotes ?? 0, icon: IconFileText, color: "green", bg: "#f0fdf4" },
+          { label: "Orçamentos", value: data?.pendingQuotes ?? 0, icon: IconFileText, color: "green", bg: "#f0fdf4" },
         ].map(({ label, value, icon: Icon, color, bg }) => (
-          <Card key={label} padding="lg" radius="lg" withBorder shadow="sm">
-            <Group justify="space-between" mb="sm">
-              <Box style={{ width: 40, height: 40, borderRadius: 10, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Icon size={20} color={`var(--mantine-color-${color}-6)`} />
-              </Box>
-            </Group>
-            <Text size="xl" fw={800} lh={1}>{value}</Text>
-            <Text size="sm" c="dimmed" mt={2}>{label}</Text>
+          <Card key={label} padding={isMobile ? "sm" : "lg"} radius="lg" withBorder shadow="sm">
+            <Box style={{ width: 32, height: 32, borderRadius: 8, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }} mb={isMobile ? 4 : "sm"}>
+              <Icon size={16} color={`var(--mantine-color-${color}-6)`} />
+            </Box>
+            <Text size={isMobile ? "lg" : "xl"} fw={800} lh={1}>{value}</Text>
+            <Text size="xs" c="dimmed" mt={2}>{label}</Text>
           </Card>
         ))}
       </SimpleGrid>
