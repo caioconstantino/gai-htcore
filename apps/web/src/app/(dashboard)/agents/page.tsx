@@ -167,7 +167,8 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (isPrivate && phones.length === 0) throw new Error("Adicione pelo menos 1 número para salvar como privado.");
-      await api.patch(`/agents/${agent.id}/dynamic-values`, { values });
+      const fields = (data?.fields ?? []) as DynamicField[];
+      if (fields.length > 0) await api.patch(`/agents/${agent.id}/dynamic-values`, { values });
       await api.patch(`/agents/${agent.id}`, { isPrivate });
       await api.put(`/agents/${agent.id}/phone-permissions`, { phones });
     },
@@ -193,69 +194,64 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
 
   if (isLoading) return <Center py="xl"><Loader size="sm" /></Center>;
 
-  if (fields.length === 0) {
-    return (
-      <Stack gap="md" p="md">
+  return (
+    <Stack gap="md" p="md">
+      {fields.length === 0 ? (
         <Alert icon={<IconInfoCircle size={16} />} color="blue" radius="md">
           Este agente não possui campos configuráveis. O prompt é gerenciado pelo administrador da plataforma.
         </Alert>
-        <Group justify="flex-end">
-          <Button variant="subtle" onClick={onClose}>Fechar</Button>
-        </Group>
-      </Stack>
-    );
-  }
+      ) : (
+        <>
+          <Alert icon={<IconShieldLock size={16} />} color="blue" variant="light" radius="md">
+            <Text size="sm">Você pode personalizar os dados da sua empresa usados pelo agente. O texto base do prompt é gerenciado pelo administrador da plataforma.</Text>
+          </Alert>
 
-  return (
-    <Stack gap="md" p="md">
-      <Alert icon={<IconShieldLock size={16} />} color="blue" variant="light" radius="md">
-        <Text size="sm">Você pode personalizar os dados da sua empresa usados pelo agente. O texto base do prompt é gerenciado pelo administrador da plataforma.</Text>
-      </Alert>
+          {fields.map((field) => {
+            const isAutoFilled = autoFill[field.key] && autoFill[field.key] === values[field.key];
+            const InputComp = field.type === "textarea" ? Textarea : TextInput;
+            return (
+              <Box key={field.key}>
+                <InputComp
+                  label={
+                    <Group gap={6}>
+                      {field.label}
+                      {field.required && <Text span c="red" size="xs">*</Text>}
+                      {isAutoFilled && (
+                        <Badge size="xs" color="teal" variant="light" leftSection={<IconCheck size={9} />}>
+                          preenchido automaticamente
+                        </Badge>
+                      )}
+                    </Group>
+                  }
+                  description={field.description}
+                  placeholder={field.placeholder ?? `Valor para {{${field.key}}}`}
+                  value={values[field.key] ?? ""}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.currentTarget.value }))}
+                  minRows={field.type === "textarea" ? 3 : undefined}
+                />
+              </Box>
+            );
+          })}
 
-      {fields.map((field) => {
-        const isAutoFilled = autoFill[field.key] && autoFill[field.key] === values[field.key];
-        const InputComp = field.type === "textarea" ? Textarea : TextInput;
-        return (
-          <Box key={field.key}>
-            <InputComp
-              label={
-                <Group gap={6}>
-                  {field.label}
-                  {field.required && <Text span c="red" size="xs">*</Text>}
-                  {isAutoFilled && (
-                    <Badge size="xs" color="teal" variant="light" leftSection={<IconCheck size={9} />}>
-                      preenchido automaticamente
-                    </Badge>
-                  )}
-                </Group>
-              }
-              description={field.description}
-              placeholder={field.placeholder ?? `Valor para {{${field.key}}}`}
-              value={values[field.key] ?? ""}
-              onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.currentTarget.value }))}
-              minRows={field.type === "textarea" ? 3 : undefined}
-            />
+          {/* Prompt preview */}
+          <Box>
+            <Button
+              variant="subtle" size="xs" color="gray"
+              leftSection={showPreview ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+              onClick={togglePreview}
+            >
+              {showPreview ? "Ocultar preview" : "Ver como o agente vai usar esses dados"}
+            </Button>
+            <Collapse in={showPreview}>
+              <Paper mt="xs" p="md" radius="md" style={{ background: "#0f172a", border: "1px solid #1e293b", maxHeight: 300, overflow: "auto" }}>
+                <Text size="xs" style={{ fontFamily: "monospace", color: "#e2e8f0", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+                  {previewPrompt}
+                </Text>
+              </Paper>
+            </Collapse>
           </Box>
-        );
-      })}
-
-      {/* Prompt preview */}
-      <Box>
-        <Button
-          variant="subtle" size="xs" color="gray"
-          leftSection={showPreview ? <IconEyeOff size={13} /> : <IconEye size={13} />}
-          onClick={togglePreview}
-        >
-          {showPreview ? "Ocultar preview" : "Ver como o agente vai usar esses dados"}
-        </Button>
-        <Collapse in={showPreview}>
-          <Paper mt="xs" p="md" radius="md" style={{ background: "#0f172a", border: "1px solid #1e293b", maxHeight: 300, overflow: "auto" }}>
-            <Text size="xs" style={{ fontFamily: "monospace", color: "#e2e8f0", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
-              {previewPrompt}
-            </Text>
-          </Paper>
-        </Collapse>
-      </Box>
+        </>
+      )}
 
       <Divider label="Privacidade" labelPosition="left" />
       <Box>
