@@ -5,6 +5,15 @@ import { z } from "zod";
 
 export const agentsRouter: ExpressRouter = Router();
 
+const collectFieldsSchema = z.object({
+  standard: z.array(z.string()),
+  custom: z.array(z.object({
+    key: z.string().min(1).max(64),
+    label: z.string().min(1).max(100),
+    description: z.string().max(200).optional(),
+  })),
+}).nullable().optional();
+
 const agentSchema = z.object({
   name: z.string().min(2).max(100),
   description: z.string().max(500).optional(),
@@ -16,6 +25,7 @@ const agentSchema = z.object({
   isPrivate: z.boolean().default(false).optional(),
   aiProvider: z.string().max(50).nullable().optional(),
   aiModel: z.string().max(100).nullable().optional(),
+  collectFields: collectFieldsSchema,
 });
 
 /** Map well-known variable names to company fields for auto-fill. */

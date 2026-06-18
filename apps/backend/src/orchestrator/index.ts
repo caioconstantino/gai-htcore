@@ -8,7 +8,7 @@ import { analyzeSentiment } from "./sentiment.js";
 import { routeToSpecialists } from "./router.js";
 import { runSpecialistsInParallel } from "./specialist-runner.js";
 import { orchLog } from "./orch-logger.js";
-import { extractAndUpdateLead } from "./lead-extractor.js";
+import { extractAndUpdateLead, type CollectFieldsConfig } from "./lead-extractor.js";
 import type { WhatsAppMessage } from "../types.js";
 import type { SpecialistResult } from "./specialist-runner.js";
 
@@ -250,9 +250,13 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
 
   const totalTokens = totalTokensIn + totalTokensOut;
 
+  // Find the attendance (identifier) agent to pass its collectFields to the extractor
+  const identifierAgent = allAgents.find((a) => a.type === "attendance");
+  const collectFields = identifierAgent?.collectFields as CollectFieldsConfig | null | undefined;
+
   // Run extraction concurrently with DB saves — both happen after response is built
   const [extractionResult] = await Promise.all([
-    extractAndUpdateLead(lead, userText, history, aiProvider),
+    extractAndUpdateLead(lead, userText, history, aiProvider, collectFields),
     prisma.message.create({
       data: {
         companyId,

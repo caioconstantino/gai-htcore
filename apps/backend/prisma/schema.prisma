@@ -94,6 +94,9 @@ model Agent {
   dynamicFields   Json     @default("[]")
   // Valores dinâmicos preenchidos pela empresa (apenas em instâncias, não em templates)
   dynamicValues   Json     @default("{}")
+  // Para agentes de atendimento (tipo=attendance): campos a coletar do cliente
+  // Ex: {"standard":["name","city","document"],"custom":[{"key":"tipo_frota","label":"Tipo de frota","description":"Carro, van..."}]}
+  collectFields   Json?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

@@ -7,7 +7,7 @@ import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, SimpleGrid, Skeleton,
   ThemeIcon, Modal, TextInput, Textarea, ActionIcon, Menu, Select,
   Tabs, Divider, Drawer, ScrollArea, Paper, Tooltip, Alert,
-  Loader, Center, Collapse,
+  Loader, Center, Collapse, Checkbox,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
@@ -17,19 +17,115 @@ import {
   IconTrash, IconBoltOff, IconCheck, IconVariable, IconEdit,
   IconHistory, IconRestore, IconDeviceFloppy, IconTag,
   IconChevronRight, IconEye, IconEyeOff, IconInfoCircle,
-  IconShieldLock, IconCrown,
+  IconShieldLock, IconCrown, IconX, IconUserScan,
 } from "@tabler/icons-react";
 
 interface DynamicField { key: string; label: string; type: string; placeholder?: string; description?: string; required: boolean; }
 interface AgentTemplate { id: string; name: string; description: string | null; type: string; scope: string; triggerKeywords: string[]; dynamicFields: DynamicField[]; }
 interface PhonePermission { id: string; phone: string; label: string | null; }
+interface CustomCollectField { key: string; label: string; description: string; }
+interface CollectFieldsConfig { standard: string[]; custom: CustomCollectField[]; }
 interface Agent {
   id: string; name: string; description: string | null; type: string; scope: string;
   isActive: boolean; isPrivate: boolean; triggerKeywords: string[]; prompt: string; promptVersion: number;
   templateId: string | null; dynamicFields: DynamicField[];
   aiProvider?: string | null; aiModel?: string | null;
+  collectFields?: CollectFieldsConfig | null;
   company?: { id: string; name: string; slug: string } | null;
   phonePermissions?: PhonePermission[];
+}
+
+const STANDARD_COLLECT_FIELDS = [
+  { key: "name",         label: "Nome do cliente" },
+  { key: "companyName",  label: "Empresa" },
+  { key: "document",     label: "CNPJ / CPF" },
+  { key: "city",         label: "Cidade" },
+  { key: "state",        label: "Estado" },
+  { key: "address",      label: "Endereço" },
+  { key: "neighborhood", label: "Bairro" },
+] as const;
+
+function CollectFieldsEditor({ value, onChange }: {
+  value: CollectFieldsConfig;
+  onChange: (v: CollectFieldsConfig) => void;
+}) {
+  const [newKey, setNewKey] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+
+  function toggleStandard(key: string) {
+    const next = value.standard.includes(key)
+      ? value.standard.filter((k) => k !== key)
+      : [...value.standard, key];
+    onChange({ ...value, standard: next });
+  }
+
+  function addCustom() {
+    const key = newKey.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!key || !newLabel.trim()) return;
+    if (value.custom.some((f) => f.key === key)) return;
+    onChange({ ...value, custom: [...value.custom, { key, label: newLabel.trim(), description: newDesc.trim() }] });
+    setNewKey(""); setNewLabel(""); setNewDesc("");
+  }
+
+  function removeCustom(key: string) {
+    onChange({ ...value, custom: value.custom.filter((f) => f.key !== key) });
+  }
+
+  return (
+    <Stack gap="md">
+      <Box>
+        <Text size="sm" fw={600} mb="xs">Campos padrão</Text>
+        <SimpleGrid cols={2} spacing="xs">
+          {STANDARD_COLLECT_FIELDS.map((f) => (
+            <Checkbox
+              key={f.key}
+              label={f.label}
+              checked={value.standard.includes(f.key)}
+              onChange={() => toggleStandard(f.key)}
+              size="sm"
+            />
+          ))}
+        </SimpleGrid>
+      </Box>
+
+      <Divider label="Campos personalizados" labelPosition="left" />
+
+      <Stack gap="xs">
+        {value.custom.map((f) => (
+          <Group key={f.key} gap="xs" wrap="nowrap" p="xs"
+            style={{ background: "var(--mantine-color-gray-0)", borderRadius: 6, border: "1px solid var(--mantine-color-gray-2)" }}>
+            <Box style={{ flex: 1, minWidth: 0 }}>
+              <Text size="sm" fw={500}>{f.label}</Text>
+              <Text size="xs" c="dimmed">chave: {f.key}{f.description ? ` — ${f.description}` : ""}</Text>
+            </Box>
+            <ActionIcon size="sm" variant="subtle" color="red" onClick={() => removeCustom(f.key)}>
+              <IconX size={12} />
+            </ActionIcon>
+          </Group>
+        ))}
+        {value.custom.length === 0 && (
+          <Text size="xs" c="dimmed">Nenhum campo personalizado. Adicione abaixo.</Text>
+        )}
+      </Stack>
+
+      <Paper p="sm" radius="md" withBorder>
+        <Text size="xs" fw={600} mb="xs" c="dimmed">ADICIONAR CAMPO PERSONALIZADO</Text>
+        <Stack gap="xs">
+          <Group gap="xs" wrap="nowrap">
+            <TextInput size="xs" placeholder="chave (ex: tipo_frota)" value={newKey} onChange={(e) => setNewKey(e.currentTarget.value)} style={{ flex: 1 }} />
+            <TextInput size="xs" placeholder="Rótulo (ex: Tipo de frota)" value={newLabel} onChange={(e) => setNewLabel(e.currentTarget.value)} style={{ flex: 2 }} />
+          </Group>
+          <Group gap="xs" wrap="nowrap">
+            <TextInput size="xs" placeholder="Descrição para o agente (ex: Carro, van, caminhão...)" value={newDesc} onChange={(e) => setNewDesc(e.currentTarget.value)} style={{ flex: 1 }} />
+            <Button size="xs" variant="light" onClick={addCustom} disabled={!newKey.trim() || !newLabel.trim()} leftSection={<IconPlus size={12} />}>
+              Adicionar
+            </Button>
+          </Group>
+        </Stack>
+      </Paper>
+    </Stack>
+  );
 }
 interface PromptVersion { id: string; version: number; prompt: string; label: string | null; createdAt: string; }
 interface DynamicValuesData { fields: DynamicField[]; values: Record<string, string>; autoFill: Record<string, string>; templateId: string | null; }
@@ -153,6 +249,9 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
   const [phones, setPhones] = useState<PhoneEntry[]>(
     agent.phonePermissions?.map((p) => ({ phone: p.phone, label: p.label ?? "" })) ?? []
   );
+  const [collectFields, setCollectFields] = useState<CollectFieldsConfig>(
+    agent.collectFields ?? { standard: ["name", "city", "document"], custom: [] }
+  );
 
   const { data, isLoading } = useQuery<DynamicValuesData>({
     queryKey: ["dynamic-values", agent.id],
@@ -169,6 +268,7 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
       const fields = (data?.fields ?? []) as DynamicField[];
       if (fields.length > 0) await api.patch(`/agents/${agent.id}/dynamic-values`, { values });
       if (agent.isPrivate) await api.put(`/agents/${agent.id}/phone-permissions`, { phones });
+      if (agent.type === "attendance") await api.patch(`/agents/${agent.id}`, { collectFields });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
@@ -194,11 +294,26 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
 
   return (
     <Stack gap="md" p="md">
-      {fields.length === 0 ? (
+      {agent.type === "attendance" && (
+        <>
+          <Box p="sm" style={{ background: "var(--mantine-color-violet-0)", borderRadius: 8, border: "1px solid var(--mantine-color-violet-2)" }}>
+            <Group gap="xs" mb="sm">
+              <IconUserScan size={15} color="var(--mantine-color-violet-6)" />
+              <Text size="sm" fw={600} c="violet.7">Dados a coletar do cliente</Text>
+            </Group>
+            <Text size="xs" c="dimmed" mb="md">
+              Selecione quais dados o agente deve coletar. Campos personalizados são armazenados no contexto do lead.
+            </Text>
+            {CollectFieldsEditor({ value: collectFields, onChange: setCollectFields })}
+          </Box>
+          <Divider />
+        </>
+      )}
+      {fields.length === 0 && agent.type !== "attendance" ? (
         <Alert icon={<IconInfoCircle size={16} />} color="blue" radius="md">
           Este agente não possui campos configuráveis. O prompt é gerenciado pelo administrador da plataforma.
         </Alert>
-      ) : (
+      ) : fields.length > 0 ? (
         <>
           <Alert icon={<IconShieldLock size={16} />} color="blue" variant="light" radius="md">
             <Text size="sm">Você pode personalizar os dados da sua empresa usados pelo agente. O texto base do prompt é gerenciado pelo administrador da plataforma.</Text>
@@ -259,7 +374,7 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
             </Collapse>
           </Box>
         </>
-      )}
+      ) : null}
 
       {agent.isPrivate && (
         <>

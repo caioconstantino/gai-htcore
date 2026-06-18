@@ -3,12 +3,18 @@ import { logger } from "../lib/logger.js";
 import type { Lead } from "@prisma/client";
 import type { AIProvider } from "../ai/types.js";
 
+export interface CollectFieldsConfig {
+  standard: string[];
+  custom: Array<{ key: string; label: string; description?: string }>;
+}
+
 interface Extracted {
   name: string | null;
   companyName: string | null;
   city: string | null;
   role: string | null;
   document: string | null; // CNPJ or CPF
+  [key: string]: string | null; // custom fields
 }
 
 interface ExtractionResult {
@@ -24,16 +30,32 @@ interface ExtractionResult {
  *
  * Returns a result object so the caller can log it — never throws.
  */
+// Default fields extracted when no collectFields config is present
+const DEFAULT_STANDARD = ["name", "companyName", "city", "document"];
+
 export async function extractAndUpdateLead(
   lead: Lead,
   userMessage: string,
   history: Array<{ role: string; content: string }>,
   aiProvider: AIProvider,
+  collectFields?: CollectFieldsConfig | null,
 ): Promise<ExtractionResult> {
   const empty: Extracted = { name: null, companyName: null, city: null, role: null, document: null };
 
-  const alreadyComplete = lead.name && lead.companyName && lead.city && lead.document;
-  if (alreadyComplete) {
+  const standardFields = collectFields?.standard ?? DEFAULT_STANDARD;
+  const customFields   = collectFields?.custom   ?? [];
+
+  // Skip if all configured standard fields and custom fields are already filled
+  const existingCtx = lead.context as Record<string, unknown>;
+  const standardDone = standardFields.every((key) => {
+    const direct = (lead as Record<string, unknown>)[key];
+    return typeof direct === "string" && (direct as string).trim();
+  });
+  const customDone = customFields.every((f) => {
+    const v = existingCtx?.[f.key];
+    return typeof v === "string" && (v as string).trim();
+  });
+  if (standardDone && customDone) {
     return { extracted: empty, saved: [], skipped: true };
   }
 
@@ -46,25 +68,44 @@ export async function extractAndUpdateLead(
     ? `${recentHistory}\nCliente: ${userMessage}`
     : `Cliente: ${userMessage}`;
 
+  const standardFieldDescriptions: Record<string, string> = {
+    name:         "nome próprio que o cliente mencionou para se identificar",
+    companyName:  "empresa/negócio DO CLIENTE (não a empresa atendente)",
+    city:         "cidade mencionada pelo cliente",
+    state:        "estado ou UF mencionado pelo cliente",
+    document:     "CNPJ ou CPF mencionado pelo cliente (mantenha a formatação original)",
+    address:      "endereço ou rua mencionada pelo cliente",
+    neighborhood: "bairro mencionado pelo cliente",
+    role:         "cargo ou função do cliente",
+  };
+
+  // Build the fields section (standard + custom)
+  const fieldsToExtract = [
+    ...standardFields.map((key) => `- ${key}: ${standardFieldDescriptions[key] ?? key}`),
+    ...customFields.map((f) => `- ${f.key}: ${f.label}${f.description ? ` — ${f.description}` : ""}`),
+  ].join("\n");
+
+  // Build example JSON keys
+  const exampleKeys = [
+    ...standardFields,
+    ...customFields.map((f) => f.key),
+  ].map((k) => `"${k}":null`).join(",");
+
   const prompt = `Analise a conversa de WhatsApp abaixo e extraia dados de identificação do CLIENTE (quem está comprando/solicitando), não da empresa atendente.
 
 CONVERSA:
 ${conversationBlock}
 
-EXEMPLOS de saída esperada:
-- Cliente disse "Sou o Carlos, da Construtora ABC, CNPJ 12.345.678/0001-99": {"name":"Carlos","companyName":"Construtora ABC","city":null,"role":null,"document":"12.345.678/0001-99"}
-- Cliente disse "João" após ser perguntado o nome: {"name":"João","companyName":null,"city":null,"role":null,"document":null}
-- Cliente disse "de Campinas, meu CPF é 123.456.789-00": {"name":null,"companyName":null,"city":"Campinas","role":null,"document":"123.456.789-00"}
-- Sem dados identificáveis: {"name":null,"companyName":null,"city":null,"role":null,"document":null}
+CAMPOS A EXTRAIR:
+${fieldsToExtract}
 
-CAMPOS:
-- name: nome próprio que o cliente mencionou para se identificar
-- companyName: empresa/negócio DO CLIENTE (não a empresa atendente)
-- city: cidade mencionada pelo cliente
-- role: cargo ou função do cliente
-- document: CNPJ ou CPF mencionado pelo cliente (mantenha a formatação original)
+EXEMPLOS:
+- Cliente disse "Sou o Carlos, da Construtora ABC, CNPJ 12.345.678/0001-99": {"name":"Carlos","companyName":"Construtora ABC","document":"12.345.678/0001-99"}
+- Cliente disse "João" após ser perguntado o nome: {"name":"João"}
+- Cliente disse "de Campinas, CPF 123.456.789-00": {"city":"Campinas","document":"123.456.789-00"}
+- Sem dados identificáveis: {${exampleKeys}}
 
-Responda APENAS com JSON válido. Use null sem aspas para campos não encontrados.`;
+Responda APENAS com JSON válido contendo os campos acima. Use null sem aspas para campos não encontrados.`;
 
   try {
     const { response } = await aiProvider.chat({
@@ -92,15 +133,27 @@ Responda APENAS com JSON válido. Use null sem aspas para campos não encontrado
 
     const dbUpdate: Record<string, unknown> = {};
 
-    if (extracted.name        && !lead.name)        dbUpdate.name        = extracted.name;
-    if (extracted.companyName && !lead.companyName) dbUpdate.companyName = extracted.companyName;
-    if (extracted.city        && !lead.city)        dbUpdate.city        = extracted.city;
-    if (extracted.document    && !lead.document)    dbUpdate.document    = extracted.document;
+    // Standard fields that map directly to lead columns
+    const LEAD_COLUMNS = new Set(["name", "companyName", "city", "state", "document", "address", "neighborhood"]);
+    for (const key of standardFields) {
+      if (!LEAD_COLUMNS.has(key)) continue;
+      const val = extracted[key];
+      const current = (lead as Record<string, unknown>)[key];
+      if (val && !current) dbUpdate[key] = val;
+    }
 
-    // role goes into context (no dedicated column)
-    const existingCtx = lead.context as Record<string, unknown>;
-    if (extracted.role && !existingCtx?.role) {
-      dbUpdate.context = { ...existingCtx, role: extracted.role };
+    // role always goes to context (no dedicated column)
+    const ctxPatch: Record<string, string> = {};
+    if (extracted.role && !existingCtx?.role) ctxPatch.role = extracted.role;
+
+    // Custom fields go to context
+    for (const field of customFields) {
+      const val = extracted[field.key];
+      if (val && !existingCtx?.[field.key]) ctxPatch[field.key] = val;
+    }
+
+    if (Object.keys(ctxPatch).length > 0) {
+      dbUpdate.context = { ...existingCtx, ...ctxPatch };
     }
 
     const saved = Object.keys(dbUpdate);

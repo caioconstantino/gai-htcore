@@ -1,6 +1,57 @@
 import type { Company, Lead, Conversation, Agent } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
+interface CollectFieldsConfig {
+  standard: string[];
+  custom: Array<{ key: string; label: string; description?: string }>;
+}
+
+const STANDARD_FIELD_LABELS: Record<string, string> = {
+  name:         "Nome do cliente",
+  companyName:  "Empresa",
+  document:     "CNPJ / CPF",
+  city:         "Cidade",
+  state:        "Estado",
+  address:      "Endereço",
+  neighborhood: "Bairro",
+};
+
+function getLeadFieldValue(lead: Lead, key: string): string | null {
+  const direct = (lead as Record<string, unknown>)[key];
+  if (typeof direct === "string" && direct.trim()) return direct;
+  const ctx = lead.context as Record<string, unknown>;
+  const fromCtx = ctx?.[key];
+  return typeof fromCtx === "string" && fromCtx.trim() ? fromCtx : null;
+}
+
+function buildCollectSection(lead: Lead, cfg: CollectFieldsConfig): string {
+  const lines: string[] = [];
+
+  for (const key of cfg.standard) {
+    const label = STANDARD_FIELD_LABELS[key] ?? key;
+    const value = getLeadFieldValue(lead, key);
+    lines.push(value ? `[✓ COLETADO] ${label}: ${value}` : `[PENDENTE] ${label}`);
+  }
+
+  for (const field of cfg.custom) {
+    const value = getLeadFieldValue(lead, field.key);
+    const desc = field.description ? ` — ${field.description}` : "";
+    lines.push(value ? `[✓ COLETADO] ${field.label}: ${value}` : `[PENDENTE] ${field.label}${desc}`);
+  }
+
+  if (lines.length === 0) return "";
+
+  const allDone = lines.every((l) => l.startsWith("[✓"));
+
+  return `━━━ DADOS A COLETAR ━━━
+${lines.join("\n")}
+
+${allDone
+  ? "Todos os dados foram coletados. Encerre a identificação de forma cordial."
+  : "Pergunte APENAS pelo que está [PENDENTE], um por mensagem. Nunca repita o que está [✓ COLETADO]."}
+━━━━━━━━━━━━━━━━━━━━━━`;
+}
+
 interface ContextInput {
   company: Company & { commercialRules: { hasFixedPriceTable: boolean; allowsDiscount: boolean; maxDiscountPercent: unknown; paymentMethods: string[] } | null };
   lead: Lead;
@@ -46,8 +97,14 @@ Endereço: ${lead.address ?? "Não informado"} | Bairro: ${lead.neighborhood ?? 
 Estágio: ${lead.stage} | Contexto adicional: ${JSON.stringify(lead.context)}
 `.trim();
 
-  return `${agent.prompt}
+  // For attendance agents with collectFields, inject a live status section
+  const collectCfg = agent.type === "attendance" && agent.collectFields
+    ? (agent.collectFields as CollectFieldsConfig)
+    : null;
+  const collectSection = collectCfg ? buildCollectSection(lead, collectCfg) : "";
 
+  return `${agent.prompt}
+${collectSection ? `\n${collectSection}\n` : ""}
 EMPRESA: ${company.name}
 
 ${leadInfo}
