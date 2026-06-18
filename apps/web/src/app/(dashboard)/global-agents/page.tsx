@@ -21,7 +21,8 @@ interface DynamicField {
 }
 interface AgentTemplate {
   id: string; name: string; description: string | null; type: string;
-  scope: string; isActive: boolean; triggerKeywords: string[];
+  scope: string; isActive: boolean; isPrivate: boolean; autoActivate: boolean;
+  triggerKeywords: string[];
   prompt: string; promptVersion: number; dynamicFields: DynamicField[];
   aiProvider?: string | null; aiModel?: string | null;
   _count?: { instances: number };
@@ -189,6 +190,8 @@ function TemplateEditor({
   const [type, setType] = useState(template?.type ?? "commercial");
   const [scope, setScope] = useState(template?.scope ?? "external");
   const [isActive, setIsActive] = useState(template?.isActive ?? true);
+  const [autoActivate, setAutoActivate] = useState(template?.autoActivate ?? false);
+  const [isPrivate, setIsPrivate] = useState(template?.isPrivate ?? false);
   const [promptText, setPromptText] = useState(template?.prompt ?? "");
   const [keywords, setKeywords] = useState<string[]>(template?.triggerKeywords ?? []);
   const [dynamicFields, setDynamicFields] = useState<DynamicField[]>((template?.dynamicFields ?? []) as DynamicField[]);
@@ -211,7 +214,7 @@ function TemplateEditor({
   });
 
   const createMutation = useMutation({
-    mutationFn: () => api.post("/agent-templates", { name, description, type, scope, prompt: promptText, triggerKeywords: keywords, dynamicFields, isActive, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null }),
+    mutationFn: () => api.post("/agent-templates", { name, description, type, scope, prompt: promptText, triggerKeywords: keywords, dynamicFields, isActive, autoActivate, isPrivate, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agent-templates"] });
       notifications.show({ message: "Template criado!", color: "green" });
@@ -227,7 +230,7 @@ function TemplateEditor({
       keywords,
     }).then(() =>
       // Also update name, description, type, scope, isActive, dynamicFields via patch
-      api.patch(`/agent-templates/${template!.id}`, { name, description, type, scope, isActive, dynamicFields, triggerKeywords: keywords, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null })
+      api.patch(`/agent-templates/${template!.id}`, { name, description, type, scope, isActive, autoActivate, isPrivate, dynamicFields, triggerKeywords: keywords, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null })
     ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agent-templates"] });
@@ -318,6 +321,20 @@ function TemplateEditor({
           <Select label="Escopo" data={[{ value: "external", label: "Externo (WhatsApp)" }, { value: "internal", label: "Interno" }]} value={scope} onChange={(v) => setScope(v ?? "external")} />
         </Group>
         <Switch label="Ativo (visível para as empresas ativarem)" checked={isActive} onChange={(e) => setIsActive(e.currentTarget.checked)} />
+        <Switch
+          label="Auto-ativar para todas as empresas"
+          description="Quando marcado, este agente é criado automaticamente para cada empresa — inclusive as novas."
+          checked={autoActivate}
+          onChange={(e) => setAutoActivate(e.currentTarget.checked)}
+          color="orange"
+        />
+        <Switch
+          label="Agente Privado"
+          description="Quando marcado, cada empresa deve definir quais números de telefone têm acesso a este agente."
+          checked={isPrivate}
+          onChange={(e) => setIsPrivate(e.currentTarget.checked)}
+          color="indigo"
+        />
 
         <Divider label="Prompt base" labelPosition="left" />
 
@@ -504,6 +521,8 @@ export default function GlobalAgentsPage() {
               <Group justify="space-between" mb="md">
                 <ThemeIcon size={40} radius="md" color={typeColors[t.type] ?? "gray"} variant="light"><IconRobot size={20} /></ThemeIcon>
                 <Group gap={6}>
+                  {t.autoActivate && <Badge color="orange" variant="light" size="sm">Auto-ativa</Badge>}
+                  {t.isPrivate && <Badge color="indigo" variant="light" size="sm">Privado</Badge>}
                   <Badge color={t.isActive ? "green" : "gray"} variant="light" size="sm">{t.isActive ? "Ativo" : "Inativo"}</Badge>
                   <Menu withinPortal position="bottom-end" shadow="sm">
                     <Menu.Target><ActionIcon variant="subtle" color="gray" size="sm"><IconDots size={14} /></ActionIcon></Menu.Target>

@@ -150,7 +150,6 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
   const qc = useQueryClient();
   const [values, setValues] = useState<Record<string, string>>({});
   const [showPreview, { toggle: togglePreview }] = useDisclosure(false);
-  const [isPrivate, setIsPrivate] = useState(agent.isPrivate);
   const [phones, setPhones] = useState<PhoneEntry[]>(
     agent.phonePermissions?.map((p) => ({ phone: p.phone, label: p.label ?? "" })) ?? []
   );
@@ -166,11 +165,10 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (isPrivate && phones.length === 0) throw new Error("Adicione pelo menos 1 número para salvar como privado.");
+      if (agent.isPrivate && phones.length === 0) throw new Error("Adicione pelo menos 1 número autorizado para salvar.");
       const fields = (data?.fields ?? []) as DynamicField[];
       if (fields.length > 0) await api.patch(`/agents/${agent.id}/dynamic-values`, { values });
-      await api.patch(`/agents/${agent.id}`, { isPrivate });
-      await api.put(`/agents/${agent.id}/phone-permissions`, { phones });
+      if (agent.isPrivate) await api.put(`/agents/${agent.id}/phone-permissions`, { phones });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
@@ -253,28 +251,25 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
         </>
       )}
 
-      <Divider label="Privacidade" labelPosition="left" />
-      <Box>
-        <Switch
-          label="Agente Privado"
-          description="Apenas números autorizados poderão usar este agente"
-          checked={isPrivate}
-          onChange={(e) => setIsPrivate(e.currentTarget.checked)}
-          color="indigo"
-        />
-        {isPrivate && (
-          <Box mt="md">
-            <Text size="sm" fw={600} mb={4}>Números autorizados</Text>
+      {agent.isPrivate && (
+        <>
+          <Divider label="Acesso Restrito" labelPosition="left" />
+          <Box p="sm" style={{ background: "var(--mantine-color-indigo-0)", borderRadius: 8, border: "1px solid var(--mantine-color-indigo-2)" }}>
+            <Group gap="xs" mb="sm">
+              <IconShieldLock size={14} color="var(--mantine-color-indigo-6)" />
+              <Text size="sm" fw={600} c="indigo.7">Agente Privado</Text>
+              <Text size="xs" c="dimmed">— defina quais números têm acesso</Text>
+            </Group>
             <Text size="xs" c="dimmed" mb="sm">
-              Somente estes números terão acesso ao agente. Pelo menos 1 obrigatório.
+              Este agente só atende os números cadastrados abaixo. Adicione os WhatsApps da sua equipe.
             </Text>
             <PhonePermissionsManager phones={phones} setPhones={setPhones} />
             {phones.length === 0 && (
-              <Text size="xs" c="red" mt={4}>Adicione pelo menos 1 número para salvar como privado.</Text>
+              <Text size="xs" c="red" mt={6}>Adicione pelo menos 1 número autorizado.</Text>
             )}
           </Box>
-        )}
-      </Box>
+        </>
+      )}
 
       <Group justify="flex-end" pt="xs">
         <Button variant="subtle" onClick={onClose}>Cancelar</Button>

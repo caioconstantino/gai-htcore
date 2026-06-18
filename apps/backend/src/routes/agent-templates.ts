@@ -25,6 +25,7 @@ const templateSchema = z.object({
   dynamicFields: z.array(dynamicFieldSchema).default([]),
   isActive: z.boolean().default(true),
   autoActivate: z.boolean().default(false).optional(),
+  isPrivate: z.boolean().default(false).optional(),
   aiProvider: z.string().max(50).nullable().optional(),
   aiModel: z.string().max(100).nullable().optional(),
 });
@@ -175,6 +176,7 @@ agentTemplatesRouter.post("/activate", async (req: AuthRequest, res, next) => {
         dynamicFields: template.dynamicFields as object[],
         dynamicValues,
         isActive: true,
+        isPrivate: template.isPrivate,
       },
     });
 
