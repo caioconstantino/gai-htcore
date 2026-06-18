@@ -13,6 +13,7 @@ const agentSchema = z.object({
   prompt: z.string().max(12000).default(""),
   triggerKeywords: z.array(z.string()).default([]),
   isActive: z.boolean().default(true),
+  isPrivate: z.boolean().default(false).optional(),
   aiProvider: z.string().max(50).nullable().optional(),
   aiModel: z.string().max(100).nullable().optional(),
 });
@@ -38,9 +39,10 @@ agentsRouter.get("/", async (req: AuthRequest, res, next) => {
         isTemplate: false,
         ...(companyId ? { companyId } : {}),
       },
-      include: isSuperAdmin
-        ? { company: { select: { id: true, name: true, slug: true } } }
-        : undefined,
+      include: {
+        ...(isSuperAdmin ? { company: { select: { id: true, name: true, slug: true } } } : {}),
+        phonePermissions: { select: { id: true, phone: true, label: true } },
+      },
       orderBy: [{ companyId: "asc" }, { type: "asc" }, { name: "asc" }],
     });
     res.json({ data: agents, total: agents.length });
@@ -275,5 +277,56 @@ agentsRouter.patch("/:id/dynamic-values", async (req: AuthRequest, res, next) =>
     ]);
 
     res.json(version);
+  } catch (err) { next(err); }
+});
+
+// ── Phone permissions (whitelist for private agents) ───────────────────────────
+
+agentsRouter.get("/:id/phone-permissions", async (req: AuthRequest, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { id: req.params.id }, select: { companyId: true } });
+    if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
+    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    const permissions = await prisma.agentPhonePermission.findMany({
+      where: { agentId: req.params.id },
+      orderBy: { createdAt: "asc" },
+    });
+    res.json(permissions);
+  } catch (err) { next(err); }
+});
+
+/** Replace the entire phone whitelist for an agent. */
+agentsRouter.put("/:id/phone-permissions", async (req: AuthRequest, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({ where: { id: req.params.id }, select: { companyId: true } });
+    if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
+    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+
+    const { phones } = req.body as { phones: Array<{ phone: string; label?: string }> };
+    if (!Array.isArray(phones)) { res.status(400).json({ error: "phones deve ser um array" }); return; }
+
+    const ops: Parameters<typeof prisma.$transaction>[0] = [
+      prisma.agentPhonePermission.deleteMany({ where: { agentId: req.params.id } }),
+    ];
+    if (phones.length > 0) {
+      ops.push(
+        prisma.agentPhonePermission.createMany({
+          data: phones.map((p) => ({
+            agentId: req.params.id,
+            phone: p.phone.trim().replace(/\s/g, ""),
+            label: p.label?.trim() || null,
+          })),
+          skipDuplicates: true,
+        })
+      );
+    }
+    await prisma.$transaction(ops);
+
+    const result = await prisma.agentPhonePermission.findMany({ where: { agentId: req.params.id } });
+    res.json(result);
   } catch (err) { next(err); }
 });

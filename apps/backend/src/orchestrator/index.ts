@@ -100,7 +100,18 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   const aiProvider = defaultProvider;
 
   const orchestratorAgent = allAgents.find((a) => a.type === "orchestrator");
-  const specialists = allAgents.filter((a) => a.type !== "orchestrator" && a.scope === "external");
+  let specialists = allAgents.filter((a) => a.type !== "orchestrator" && a.scope === "external");
+
+  // Filter private specialists — only let through if lead's phone is whitelisted
+  const privateIds = specialists.filter((s) => s.isPrivate).map((s) => s.id);
+  if (privateIds.length > 0) {
+    const allowed = await prisma.agentPhonePermission.findMany({
+      where: { agentId: { in: privateIds }, phone: from },
+      select: { agentId: true },
+    });
+    const allowedSet = new Set(allowed.map((p) => p.agentId));
+    specialists = specialists.filter((s) => !s.isPrivate || allowedSet.has(s.id));
+  }
 
   let finalResponse: string;
   let totalTokensIn = 0;

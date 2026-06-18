@@ -84,6 +84,7 @@ model Agent {
   aiProvider      String?                         // null = use company default
   aiModel         String?                         // null = use company default
   isActive        Boolean  @default(true)
+  isPrivate       Boolean  @default(false)   // true = whitelist de telefones obrigatória
   triggerKeywords String[] @default([])
   requiredFields  String[] @default([])
   followUpRules   Json     @default("[]")
@@ -95,14 +96,28 @@ model Agent {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  company        Company?             @relation(fields: [companyId], references: [id])
-  template       Agent?               @relation("TemplateInstances", fields: [templateId], references: [id])
-  instances      Agent[]              @relation("TemplateInstances")
-  conversations  Conversation[]
-  messages       Message[]
-  promptVersions AgentPromptVersion[]
+  company          Company?               @relation(fields: [companyId], references: [id])
+  template         Agent?                 @relation("TemplateInstances", fields: [templateId], references: [id])
+  instances        Agent[]                @relation("TemplateInstances")
+  conversations    Conversation[]
+  messages         Message[]
+  promptVersions   AgentPromptVersion[]
+  phonePermissions AgentPhonePermission[]
 
   @@map("agents")
+}
+
+model AgentPhonePermission {
+  id        String   @id @default(cuid())
+  agentId   String
+  phone     String
+  label     String?
+  createdAt DateTime @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, phone])
+  @@map("agent_phone_permissions")
 }
 
 model AgentPromptVersion {
