@@ -7,7 +7,7 @@ import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, SimpleGrid, Skeleton,
   ThemeIcon, Modal, TextInput, Textarea, ActionIcon, Menu, Select,
   Tabs, Divider, Drawer, ScrollArea, Paper, Tooltip, Alert,
-  Loader, Center, Collapse, Switch,
+  Loader, Center, Collapse,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
@@ -364,10 +364,6 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
   const [promptText, setPromptText] = useState(agent.prompt);
   const [keywords, setKeywords] = useState<string[]>(agent.triggerKeywords);
   const [aiModel, setAiModel] = useState<string | null>(agent.aiModel ?? null);
-  const [isPrivate, setIsPrivate] = useState(agent.isPrivate);
-  const [phones, setPhones] = useState<PhoneEntry[]>(
-    agent.phonePermissions?.map((p) => ({ phone: p.phone, label: p.label ?? "" })) ?? []
-  );
   const [kwInput, setKwInput] = useState("");
   const [saveLabel, setSaveLabel] = useState("");
   const [showSaveLabel, setShowSaveLabel] = useState(false);
@@ -375,9 +371,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
 
   const isDirty = promptText !== agent.prompt
     || JSON.stringify(keywords) !== JSON.stringify(agent.triggerKeywords)
-    || aiModel !== (agent.aiModel ?? null)
-    || isPrivate !== agent.isPrivate
-    || JSON.stringify(phones.map((p) => p.phone).sort()) !== JSON.stringify((agent.phonePermissions ?? []).map((p) => p.phone).sort());
+    || aiModel !== (agent.aiModel ?? null);
 
   const { data: versions, isLoading: versionsLoading } = useQuery<PromptVersion[]>({
     queryKey: ["prompt-versions", agent.id],
@@ -386,10 +380,8 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (isPrivate && phones.length === 0) throw new Error("Adicione pelo menos 1 número para salvar como privado.");
       await api.post(`/agents/${agent.id}/prompt-versions`, { prompt: promptText, label: saveLabel.trim() || undefined, keywords });
-      await api.patch(`/agents/${agent.id}`, { aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null, isPrivate });
-      await api.put(`/agents/${agent.id}/phone-permissions`, { phones });
+      await api.patch(`/agents/${agent.id}`, { aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
@@ -517,7 +509,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
             </Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}>
-            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} isPrivate={isPrivate} setIsPrivate={setIsPrivate} phones={phones} setPhones={setPhones} />
+            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
           </Tabs.Panel>
           <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <HistorySidebar />
@@ -526,7 +518,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
       ) : (
         <Box style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
           <Box style={{ flex: 1, overflow: "auto" }}>
-            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} isPrivate={isPrivate} setIsPrivate={setIsPrivate} phones={phones} setPhones={setPhones} />
+            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
           </Box>
           <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <HistorySidebar />
@@ -537,14 +529,12 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
   );
 }
 
-function EditorPanel({ promptText, setPromptText, keywords, setKeywords, kwInput, setKwInput, addKeyword, vars, aiModel, setAiModel, isPrivate, setIsPrivate, phones, setPhones }: {
+function EditorPanel({ promptText, setPromptText, keywords, setKeywords, kwInput, setKwInput, addKeyword, vars, aiModel, setAiModel }: {
   promptText: string; setPromptText: (v: string) => void;
   keywords: string[]; setKeywords: (fn: (prev: string[]) => string[]) => void;
   kwInput: string; setKwInput: (v: string) => void;
   addKeyword: () => void; vars: string[];
   aiModel: string | null; setAiModel: (v: string | null) => void;
-  isPrivate: boolean; setIsPrivate: (v: boolean) => void;
-  phones: PhoneEntry[]; setPhones: (p: PhoneEntry[]) => void;
 }) {
   return (
     <Stack gap="md" p="md">
@@ -590,29 +580,6 @@ function EditorPanel({ promptText, setPromptText, keywords, setKeywords, kwInput
 
       <Divider label="Modelo de IA" labelPosition="left" />
       <ModelSelector value={aiModel} onChange={setAiModel} promptLength={promptText.length} />
-
-      <Divider label="Privacidade" labelPosition="left" />
-      <Box>
-        <Switch
-          label="Agente Privado"
-          description="Apenas números autorizados poderão usar este agente via WhatsApp"
-          checked={isPrivate}
-          onChange={(e) => setIsPrivate(e.currentTarget.checked)}
-          color="indigo"
-        />
-        {isPrivate && (
-          <Box mt="md" p="sm" style={{ background: "var(--mantine-color-indigo-0)", borderRadius: 8, border: "1px solid var(--mantine-color-indigo-2)" }}>
-            <Text size="sm" fw={600} mb={4}>Números autorizados</Text>
-            <Text size="xs" c="dimmed" mb="sm">
-              Somente estes números terão acesso ao agente. Pelo menos 1 obrigatório.
-            </Text>
-            <PhonePermissionsManager phones={phones} setPhones={setPhones} />
-            {phones.length === 0 && (
-              <Text size="xs" c="red" mt={6}>Adicione pelo menos 1 número para salvar como privado.</Text>
-            )}
-          </Box>
-        )}
-      </Box>
     </Stack>
   );
 }
