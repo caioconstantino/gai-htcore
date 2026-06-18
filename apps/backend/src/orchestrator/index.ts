@@ -8,6 +8,7 @@ import { analyzeSentiment } from "./sentiment.js";
 import { routeToSpecialists } from "./router.js";
 import { runSpecialistsInParallel } from "./specialist-runner.js";
 import { orchLog } from "./orch-logger.js";
+import { extractAndUpdateLead } from "./lead-extractor.js";
 import type { WhatsAppMessage } from "../types.js";
 import type { SpecialistResult } from "./specialist-runner.js";
 
@@ -242,6 +243,10 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
 
   const needsHandoff = finalResponse.includes("[TRANSBORDO]");
   const cleanResponse = finalResponse.replace("[TRANSBORDO]", "").trim();
+
+  // Fire-and-forget: extract lead data from this turn and update the record.
+  // Runs after the response is ready so it never delays the WhatsApp reply.
+  extractAndUpdateLead(lead, userText, history, aiProvider).catch(() => {});
 
   history.push({ role: "user", content: userText });
   history.push({ role: "assistant", content: cleanResponse });
