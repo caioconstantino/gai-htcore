@@ -201,21 +201,25 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
 }
 
 // ── AI Model selector + cost estimator ───────────────────────────────────────
+const USD_TO_BRL = 5.5;
+// Base estimate for dropdown label: 1100 input + 300 output tokens per message
+const BASE_INPUT_TOKENS = 1100;
+const BASE_OUTPUT_TOKENS = 300;
+
 const AI_MODELS = [
-  { provider: "openai", value: "gpt-4o-mini",      label: "GPT-4o Mini",    badge: "Econômico",   badgeColor: "green",  inputPer1M: 0.15,  outputPer1M: 0.60  },
-  { provider: "openai", value: "gpt-4o",           label: "GPT-4o",         badge: "Recomendado", badgeColor: "blue",   inputPer1M: 2.50,  outputPer1M: 10.00 },
-  { provider: "openai", value: "gpt-4-turbo",      label: "GPT-4 Turbo",    badge: "Avançado",    badgeColor: "violet", inputPer1M: 10.00, outputPer1M: 30.00 },
-  { provider: "openai", value: "gpt-3.5-turbo",    label: "GPT-3.5 Turbo",  badge: "Legado",      badgeColor: "gray",   inputPer1M: 0.50,  outputPer1M: 1.50  },
+  { provider: "openai", value: "gpt-4o-mini",   label: "GPT-4o Mini",   badge: "Econômico",   badgeColor: "green",  inputPer1M: 0.15,  outputPer1M: 0.60  },
+  { provider: "openai", value: "gpt-4o",         label: "GPT-4o",        badge: "Recomendado", badgeColor: "blue",   inputPer1M: 2.50,  outputPer1M: 10.00 },
+  { provider: "openai", value: "gpt-4-turbo",    label: "GPT-4 Turbo",   badge: "Avançado",    badgeColor: "violet", inputPer1M: 10.00, outputPer1M: 30.00 },
+  { provider: "openai", value: "gpt-3.5-turbo",  label: "GPT-3.5 Turbo", badge: "Legado",      badgeColor: "gray",   inputPer1M: 0.50,  outputPer1M: 1.50  },
 ] as const;
 
-function estimateCost(modelValue: string | null | undefined, promptLength: number) {
-  const model = AI_MODELS.find((m) => m.value === modelValue);
-  if (!model) return null;
-  // Rough estimates: prompt tokens + ~600 context/history; output ~300 tokens
-  const estimatedInput = Math.ceil(promptLength / 4) + 600;
-  const estimatedOutput = 300;
-  const costUSD = (estimatedInput * model.inputPer1M + estimatedOutput * model.outputPer1M) / 1_000_000;
-  return { costUSD, estimatedInput, estimatedOutput };
+function costPerMsgBRL(inputPer1M: number, outputPer1M: number, inputTokens = BASE_INPUT_TOKENS, outputTokens = BASE_OUTPUT_TOKENS) {
+  return ((inputTokens * inputPer1M + outputTokens * outputPer1M) / 1_000_000) * USD_TO_BRL;
+}
+
+function fmtBRL(value: number) {
+  if (value < 0.01) return `R$ ${value.toFixed(4)}`;
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 3 });
 }
 
 function ModelSelector({
@@ -227,7 +231,8 @@ function ModelSelector({
   defaultLabel?: string;
 }) {
   const selected = AI_MODELS.find((m) => m.value === value);
-  const cost = selected ? estimateCost(value, promptLength) : null;
+  const estimatedInput = selected ? Math.ceil(promptLength / 4) + 600 : BASE_INPUT_TOKENS;
+  const cost = selected ? costPerMsgBRL(selected.inputPer1M, selected.outputPer1M, estimatedInput) : null;
 
   return (
     <Box>
@@ -238,31 +243,28 @@ function ModelSelector({
         clearable
         value={value ?? null}
         onChange={onChange}
-        data={AI_MODELS.map((m) => ({
-          value: m.value,
-          label: m.label,
-        }))}
+        data={AI_MODELS.map((m) => ({ value: m.value, label: m.label }))}
         renderOption={({ option }) => {
           const m = AI_MODELS.find((x) => x.value === option.value);
           if (!m) return <Text size="sm">{option.label}</Text>;
+          const brl = costPerMsgBRL(m.inputPer1M, m.outputPer1M);
           return (
             <Group justify="space-between" w="100%" wrap="nowrap">
               <Text size="sm" fw={500}>{m.label}</Text>
               <Group gap={4}>
                 <Badge size="xs" color={m.badgeColor} variant="light">{m.badge}</Badge>
-                <Text size="xs" c="dimmed">${m.inputPer1M}/1M in</Text>
+                <Text size="xs" c="dimmed">≈ {fmtBRL(brl)}/msg</Text>
               </Group>
             </Group>
           );
         }}
       />
-      {cost && (
+      {cost !== null && (
         <Paper mt="xs" p="xs" radius="md" style={{ background: "var(--mantine-color-blue-0)", border: "1px solid var(--mantine-color-blue-2)" }}>
           <Group gap="xs" wrap="wrap">
             <Text size="xs" fw={600} c="blue">Custo estimado por mensagem:</Text>
-            <Badge size="sm" color="blue" variant="filled">${cost.costUSD.toFixed(5)}</Badge>
-            <Text size="xs" c="dimmed">≈ R$ {(cost.costUSD * 5.5).toFixed(4)}</Text>
-            <Text size="xs" c="dimmed">({cost.estimatedInput} tokens entrada + {cost.estimatedOutput} saída)</Text>
+            <Badge size="sm" color="blue" variant="filled">{fmtBRL(cost)}</Badge>
+            <Text size="xs" c="dimmed">({estimatedInput} tokens entrada + {BASE_OUTPUT_TOKENS} saída)</Text>
           </Group>
         </Paper>
       )}
