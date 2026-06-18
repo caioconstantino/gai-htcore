@@ -1,22 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { Box, Burger, Drawer, Group, Text, ThemeIcon } from "@mantine/core";
+import { Box, Burger, Drawer, Group, Text, ThemeIcon, Loader, Center } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { IconBolt } from "@tabler/icons-react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { token } = useAuthStore();
+  const { token, _hasHydrated } = useAuthStore();
   const [drawerOpened, { open, close }] = useDisclosure(false);
   const isMobile = useMediaQuery("(max-width: 768px)") ?? false;
 
   useEffect(() => {
-    if (!token) router.push("/login");
-  }, [token, router]);
+    // Only redirect after the store has rehydrated from localStorage.
+    // Without this guard, the first render sees token=null and redirects
+    // to /login even when the user is actually logged in.
+    if (_hasHydrated && !token) {
+      router.push("/login");
+    }
+  }, [_hasHydrated, token, router]);
+
+  // Show a loading screen while rehydrating to avoid flash of /login
+  if (!_hasHydrated) {
+    return (
+      <Center style={{ height: "100vh", background: "#f8fafc" }}>
+        <Loader size="md" color="blue" />
+      </Center>
+    );
+  }
 
   if (!token) return null;
 

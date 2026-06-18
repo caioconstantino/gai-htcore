@@ -12,8 +12,10 @@ interface AuthUser {
 interface AuthState {
   token: string | null;
   user: AuthUser | null;
+  _hasHydrated: boolean;
   setAuth: (token: string, user: AuthUser) => void;
   logout: () => void;
+  setHasHydrated: (v: boolean) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -21,15 +23,18 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       token: null,
       user: null,
-      setAuth: (token, user) => {
-        localStorage.setItem("gai:token", token);
-        set({ token, user });
-      },
-      logout: () => {
-        localStorage.removeItem("gai:token");
-        set({ token: null, user: null });
-      },
+      _hasHydrated: false,
+      setAuth: (token, user) => set({ token, user }),
+      logout: () => set({ token: null, user: null }),
+      setHasHydrated: (v) => set({ _hasHydrated: v }),
     }),
-    { name: "gai:auth" }
+    {
+      name: "gai:auth",
+      // Don't persist the hydration flag itself
+      partialize: (state) => ({ token: state.token, user: state.user }),
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+      },
+    }
   )
 );
