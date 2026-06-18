@@ -443,15 +443,15 @@ function TemplateEditor({
               </Tabs.Tab>
             )}
           </Tabs.List>
-          <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}><EditorContent /></Tabs.Panel>
-          {isEdit && <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}><HistorySidebar /></Tabs.Panel>}
+          <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}>{EditorContent()}</Tabs.Panel>
+          {isEdit && <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>{HistorySidebar()}</Tabs.Panel>}
         </Tabs>
       ) : (
         <Box style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
-          <Box style={{ flex: 1, overflow: "auto" }}><EditorContent /></Box>
+          <Box style={{ flex: 1, overflow: "auto" }}>{EditorContent()}</Box>
           {isEdit && (
             <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <HistorySidebar />
+              {HistorySidebar()}
             </Box>
           )}
         </Box>

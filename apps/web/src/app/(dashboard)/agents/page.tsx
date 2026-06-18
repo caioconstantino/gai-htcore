@@ -184,7 +184,7 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
   // Build prompt preview by substituting values into the current agent prompt
   const previewPrompt = Object.entries(values).reduce(
     (acc, [key, val]) => acc.replaceAll(`{{${key}}}`, val || `{{${key}}}`),
-    agent.prompt
+    agent.prompt ?? ""
   );
 
   const fields = (data?.fields ?? []) as DynamicField[];
@@ -206,27 +206,37 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
 
           {fields.map((field) => {
             const isAutoFilled = autoFill[field.key] && autoFill[field.key] === values[field.key];
-            const InputComp = field.type === "textarea" ? Textarea : TextInput;
+            const label = (
+              <Group gap={6}>
+                {field.label}
+                {field.required && <Text span c="red" size="xs">*</Text>}
+                {isAutoFilled && (
+                  <Badge size="xs" color="teal" variant="light" leftSection={<IconCheck size={9} />}>
+                    preenchido automaticamente
+                  </Badge>
+                )}
+              </Group>
+            );
             return (
               <Box key={field.key}>
-                <InputComp
-                  label={
-                    <Group gap={6}>
-                      {field.label}
-                      {field.required && <Text span c="red" size="xs">*</Text>}
-                      {isAutoFilled && (
-                        <Badge size="xs" color="teal" variant="light" leftSection={<IconCheck size={9} />}>
-                          preenchido automaticamente
-                        </Badge>
-                      )}
-                    </Group>
-                  }
-                  description={field.description}
-                  placeholder={field.placeholder ?? `Valor para {{${field.key}}}`}
-                  value={values[field.key] ?? ""}
-                  onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.currentTarget.value }))}
-                  minRows={field.type === "textarea" ? 3 : undefined}
-                />
+                {field.type === "textarea" ? (
+                  <Textarea
+                    label={label}
+                    description={field.description}
+                    placeholder={field.placeholder ?? `Valor para {{${field.key}}}`}
+                    value={values[field.key] ?? ""}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.currentTarget.value }))}
+                    minRows={3}
+                  />
+                ) : (
+                  <TextInput
+                    label={label}
+                    description={field.description}
+                    placeholder={field.placeholder ?? `Valor para {{${field.key}}}`}
+                    value={values[field.key] ?? ""}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.currentTarget.value }))}
+                  />
+                )}
               </Box>
             );
           })}
@@ -512,7 +522,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
             <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
           </Tabs.Panel>
           <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <HistorySidebar />
+            {HistorySidebar()}
           </Tabs.Panel>
         </Tabs>
       ) : (
@@ -521,7 +531,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
             <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
           </Box>
           <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <HistorySidebar />
+            {HistorySidebar()}
           </Box>
         </Box>
       )}
