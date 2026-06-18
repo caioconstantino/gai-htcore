@@ -234,7 +234,13 @@ model Lead {
   name              String?
   companyName       String?
   phone             String
+  document          String?
+  address           String?
+  neighborhood      String?
+  city              String?
+  state             String?
   source            String   @default("whatsapp")
+  leadOrigin        String?
   stage             String   @default("new")
   temperature       String   @default("warm")
   notes             String?

@@ -32,8 +32,7 @@ export async function extractAndUpdateLead(
 ): Promise<ExtractionResult> {
   const empty: Extracted = { name: null, companyName: null, city: null, role: null, document: null };
 
-  const ctx = lead.context as Record<string, unknown>;
-  const alreadyComplete = lead.name && lead.companyName && ctx?.city && ctx?.document;
+  const alreadyComplete = lead.name && lead.companyName && lead.city && lead.document;
   if (alreadyComplete) {
     return { extracted: empty, saved: [], skipped: true };
   }
@@ -95,15 +94,13 @@ Responda APENAS com JSON válido. Use null sem aspas para campos não encontrado
 
     if (extracted.name        && !lead.name)        dbUpdate.name        = extracted.name;
     if (extracted.companyName && !lead.companyName) dbUpdate.companyName = extracted.companyName;
+    if (extracted.city        && !lead.city)        dbUpdate.city        = extracted.city;
+    if (extracted.document    && !lead.document)    dbUpdate.document    = extracted.document;
 
-    // city, role, and document go into lead.context (no dedicated column)
+    // role goes into context (no dedicated column)
     const existingCtx = lead.context as Record<string, unknown>;
-    const ctxPatch: Record<string, string> = {};
-    if (extracted.city     && !existingCtx?.city)     ctxPatch.city     = extracted.city;
-    if (extracted.role     && !existingCtx?.role)     ctxPatch.role     = extracted.role;
-    if (extracted.document && !existingCtx?.document) ctxPatch.document = extracted.document;
-    if (Object.keys(ctxPatch).length > 0) {
-      dbUpdate.context = { ...existingCtx, ...ctxPatch };
+    if (extracted.role && !existingCtx?.role) {
+      dbUpdate.context = { ...existingCtx, role: extracted.role };
     }
 
     const saved = Object.keys(dbUpdate);

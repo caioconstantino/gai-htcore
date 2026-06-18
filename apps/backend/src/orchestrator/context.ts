@@ -41,7 +41,9 @@ Regras comerciais:
 
   const leadInfo = `
 Cliente: ${lead.name ?? "Não identificado"} | Empresa: ${lead.companyName ?? "Não informada"} | Temperatura: ${sentiment}
-Estágio: ${lead.stage} | Contexto coletado: ${JSON.stringify(lead.context)}
+Documento: ${lead.document ?? "Não informado"} | Cidade: ${lead.city ?? "Não informada"} | Estado: ${lead.state ?? "Não informado"}
+Endereço: ${lead.address ?? "Não informado"} | Bairro: ${lead.neighborhood ?? "Não informado"}
+Estágio: ${lead.stage} | Contexto adicional: ${JSON.stringify(lead.context)}
 `.trim();
 
   return `${agent.prompt}
