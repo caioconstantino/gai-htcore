@@ -29,6 +29,7 @@ const masterNav = [
   { href: "/financial", label: "Financeiro", icon: IconCurrencyDollar },
   { href: "/ai-usage", label: "Consumo IA", icon: IconBolt },
   { href: "/global-agents", label: "Agentes Globais", icon: IconRobot },
+  { href: "/agents", label: "Agentes das Empresas", icon: IconRobot },
   { href: "/knowledge-base", label: "Biblioteca de Inteligência", icon: IconBook2 },
   { href: "/support", label: "Suporte", icon: IconHeadset },
   { href: "/audit-logs", label: "Logs e Auditoria", icon: IconFileSearch },
