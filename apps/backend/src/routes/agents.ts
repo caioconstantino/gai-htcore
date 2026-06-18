@@ -15,6 +15,17 @@ const agentSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
+/** Map well-known variable names to company fields for auto-fill. */
+function companyAutoFill(company: { name: string; slug: string }): Record<string, string> {
+  return {
+    company_name: company.name,
+    nome_empresa: company.name,
+    empresa: company.name,
+    nome: company.name,
+    slug: company.slug,
+  };
+}
+
 agentsRouter.get("/", async (req: AuthRequest, res, next) => {
   try {
     const companyId = req.user?.role === "super_admin" ? undefined : req.user?.companyId;
@@ -74,7 +85,7 @@ agentsRouter.delete("/:id", async (req: AuthRequest, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Prompt version history ────────────────────────────────────────────────────
+// ── Prompt version history (super_admin only write, anyone can read) ──────────
 
 agentsRouter.get("/:id/prompt-versions", async (req: AuthRequest, res, next) => {
   try {
@@ -92,31 +103,26 @@ agentsRouter.get("/:id/prompt-versions", async (req: AuthRequest, res, next) => 
   } catch (err) { next(err); }
 });
 
-// Save a new prompt version (and update the agent's live prompt)
+// Save a new prompt version — super_admin only
 agentsRouter.post("/:id/prompt-versions", async (req: AuthRequest, res, next) => {
   try {
+    if (req.user?.role !== "super_admin") {
+      res.status(403).json({ error: "Apenas administradores da plataforma podem editar o prompt diretamente" });
+      return;
+    }
     const { prompt, label, keywords } = req.body as { prompt: string; label?: string; keywords?: string[] };
     if (!prompt?.trim()) { res.status(400).json({ error: "prompt é obrigatório" }); return; }
 
     const agent = await prisma.agent.findUnique({
       where: { id: req.params.id },
-      select: { companyId: true, promptVersion: true },
+      select: { promptVersion: true },
     });
     if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
-    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
-      res.status(403).json({ error: "Acesso negado" }); return;
-    }
 
     const nextVersion = agent.promptVersion + 1;
-
     const [version] = await prisma.$transaction([
       prisma.agentPromptVersion.create({
-        data: {
-          agentId: req.params.id,
-          version: nextVersion,
-          prompt: prompt.trim(),
-          label: label?.trim() || null,
-        },
+        data: { agentId: req.params.id, version: nextVersion, prompt: prompt.trim(), label: label?.trim() || null },
       }),
       prisma.agent.update({
         where: { id: req.params.id },
@@ -127,22 +133,22 @@ agentsRouter.post("/:id/prompt-versions", async (req: AuthRequest, res, next) =>
         },
       }),
     ]);
-
     res.status(201).json(version);
   } catch (err) { next(err); }
 });
 
-// Restore a previous version as the current prompt
+// Restore a previous version — super_admin only
 agentsRouter.post("/:id/prompt-versions/:versionId/restore", async (req: AuthRequest, res, next) => {
   try {
+    if (req.user?.role !== "super_admin") {
+      res.status(403).json({ error: "Apenas administradores da plataforma podem restaurar versões" });
+      return;
+    }
     const agent = await prisma.agent.findUnique({
       where: { id: req.params.id },
-      select: { companyId: true, promptVersion: true },
+      select: { promptVersion: true },
     });
     if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
-    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
-      res.status(403).json({ error: "Acesso negado" }); return;
-    }
 
     const source = await prisma.agentPromptVersion.findUnique({ where: { id: req.params.versionId } });
     if (!source || source.agentId !== req.params.id) {
@@ -150,7 +156,6 @@ agentsRouter.post("/:id/prompt-versions/:versionId/restore", async (req: AuthReq
     }
 
     const nextVersion = agent.promptVersion + 1;
-
     const [restored] = await prisma.$transaction([
       prisma.agentPromptVersion.create({
         data: {
@@ -165,7 +170,92 @@ agentsRouter.post("/:id/prompt-versions/:versionId/restore", async (req: AuthReq
         data: { prompt: source.prompt, promptVersion: nextVersion },
       }),
     ]);
-
     res.status(201).json(restored);
+  } catch (err) { next(err); }
+});
+
+// ── Dynamic values — company admin self-service ────────────────────────────────
+
+/**
+ * Returns the agent's dynamic field definitions + current values pre-filled
+ * with company data for known variable names (auto-fill).
+ */
+agentsRouter.get("/:id/dynamic-values", async (req: AuthRequest, res, next) => {
+  try {
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      include: { company: { select: { name: true, slug: true } } },
+    });
+    if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
+    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+
+    const stored = (agent.dynamicValues ?? {}) as Record<string, string>;
+    const auto = agent.company ? companyAutoFill(agent.company) : {};
+
+    // Merge: stored values win over auto-fill (company may have customized them)
+    const values: Record<string, string> = {};
+    const fields = (agent.dynamicFields ?? []) as Array<{ key: string }>;
+    for (const f of fields) {
+      values[f.key] = stored[f.key] || auto[f.key] || "";
+    }
+
+    res.json({ fields: agent.dynamicFields, values, autoFill: auto, templateId: agent.templateId });
+  } catch (err) { next(err); }
+});
+
+/**
+ * Company admin updates dynamic values. Re-interpolates the prompt from the
+ * original template so no hardcoded values become stale.
+ */
+agentsRouter.patch("/:id/dynamic-values", async (req: AuthRequest, res, next) => {
+  try {
+    const { values } = req.body as { values: Record<string, string> };
+    if (!values || typeof values !== "object") {
+      res.status(400).json({ error: "values é obrigatório" }); return;
+    }
+
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      select: { companyId: true, promptVersion: true, templateId: true, prompt: true },
+    });
+    if (!agent) { res.status(404).json({ error: "Agente não encontrado" }); return; }
+    if (req.user?.role !== "super_admin" && agent.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+
+    // Re-interpolate from the original template prompt so {{vars}} stay consistent
+    let newPrompt = agent.prompt;
+    if (agent.templateId) {
+      const template = await prisma.agent.findUnique({
+        where: { id: agent.templateId },
+        select: { prompt: true },
+      });
+      if (template) {
+        newPrompt = template.prompt;
+        for (const [key, value] of Object.entries(values)) {
+          newPrompt = newPrompt.replaceAll(`{{${key}}}`, value);
+        }
+      }
+    }
+
+    const nextVersion = agent.promptVersion + 1;
+    const [version] = await prisma.$transaction([
+      prisma.agentPromptVersion.create({
+        data: {
+          agentId: req.params.id,
+          version: nextVersion,
+          prompt: newPrompt,
+          label: "Campos dinâmicos atualizados pela empresa",
+        },
+      }),
+      prisma.agent.update({
+        where: { id: req.params.id },
+        data: { prompt: newPrompt, promptVersion: nextVersion, dynamicValues: values },
+      }),
+    ]);
+
+    res.json(version);
   } catch (err) { next(err); }
 });

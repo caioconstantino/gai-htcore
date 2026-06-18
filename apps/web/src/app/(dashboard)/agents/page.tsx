@@ -2,37 +2,38 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
 import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, SimpleGrid, Skeleton,
-  ThemeIcon, Modal, TextInput, Textarea, Select, Switch, ActionIcon, Menu,
-  Tabs, Divider, Drawer, ScrollArea, Paper, Tooltip, TextInput as TI,
-  Loader, Center, Alert,
+  ThemeIcon, Modal, TextInput, Textarea, ActionIcon, Menu,
+  Tabs, Divider, Drawer, ScrollArea, Paper, Tooltip, Alert,
+  Loader, Center, Collapse,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
-import { useMediaQuery } from "@mantine/hooks";
+import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
   IconRobot, IconPlus, IconBolt, IconWorld, IconLock, IconDots,
   IconTrash, IconBoltOff, IconCheck, IconVariable, IconEdit,
   IconHistory, IconRestore, IconDeviceFloppy, IconTag,
-  IconAlertCircle, IconChevronRight,
+  IconChevronRight, IconEye, IconEyeOff, IconInfoCircle,
+  IconShieldLock,
 } from "@tabler/icons-react";
 
 interface DynamicField { key: string; label: string; type: string; placeholder?: string; description?: string; required: boolean; }
-interface AgentTemplate { id: string; name: string; description: string | null; type: string; scope: string; triggerKeywords: string[]; dynamicFields: DynamicField[]; _count?: { instances: number }; }
+interface AgentTemplate { id: string; name: string; description: string | null; type: string; scope: string; triggerKeywords: string[]; dynamicFields: DynamicField[]; }
 interface Agent {
   id: string; name: string; description: string | null; type: string; scope: string;
   isActive: boolean; triggerKeywords: string[]; prompt: string; promptVersion: number;
   templateId: string | null; dynamicFields: DynamicField[];
 }
-interface PromptVersion {
-  id: string; version: number; prompt: string; label: string | null; createdAt: string;
-}
+interface PromptVersion { id: string; version: number; prompt: string; label: string | null; createdAt: string; }
+interface DynamicValuesData { fields: DynamicField[]; values: Record<string, string>; autoFill: Record<string, string>; templateId: string | null; }
 
 const typeColors: Record<string, string> = { commercial: "blue", attendance: "violet", support: "green", qualification: "yellow", followup: "pink", manager: "gray", orchestrator: "orange" };
 const typeLabels: Record<string, string> = { commercial: "Comercial", attendance: "Atendimento", support: "Suporte", qualification: "Qualificação", followup: "Follow-up", manager: "Gerente", orchestrator: "Orquestrador" };
 
-// ── Activate from template modal ───────────────────────────────────────────────
+// ── Activate from template ─────────────────────────────────────────────────────
 function ActivateModal({ template, onClose }: { template: AgentTemplate; onClose: () => void }) {
   const qc = useQueryClient();
   const fields = template.dynamicFields as DynamicField[];
@@ -43,7 +44,7 @@ function ActivateModal({ template, onClose }: { template: AgentTemplate; onClose
       api.post("/agent-templates/activate", { templateId: template.id, dynamicValues }).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
-      notifications.show({ message: `Agente "${template.name}" ativado com sucesso!`, color: "green" });
+      notifications.show({ message: `Agente "${template.name}" ativado!`, color: "green" });
       onClose();
     },
     onError: (err: unknown) => {
@@ -78,8 +79,7 @@ function ActivateModal({ template, onClose }: { template: AgentTemplate; onClose
             <Text size="sm" c="dimmed">Este template não requer configurações adicionais.</Text>
             <Group justify="flex-end">
               <Button variant="subtle" onClick={onClose}>Cancelar</Button>
-              <Button leftSection={<IconCheck size={16} />} loading={mutation.isPending}
-                onClick={() => mutation.mutate({})}>Ativar agente</Button>
+              <Button leftSection={<IconCheck size={16} />} loading={mutation.isPending} onClick={() => mutation.mutate({})}>Ativar agente</Button>
             </Group>
           </>
         )}
@@ -88,7 +88,117 @@ function ActivateModal({ template, onClose }: { template: AgentTemplate; onClose
   );
 }
 
-// ── Prompt Editor Drawer ───────────────────────────────────────────────────────
+// ── Dynamic values editor (company admin view) ─────────────────────────────────
+function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [showPreview, { toggle: togglePreview }] = useDisclosure(false);
+
+  const { data, isLoading } = useQuery<DynamicValuesData>({
+    queryKey: ["dynamic-values", agent.id],
+    queryFn: () => api.get(`/agents/${agent.id}/dynamic-values`).then((r) => r.data),
+  });
+
+  useEffect(() => {
+    if (data?.values) setValues(data.values);
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => api.patch(`/agents/${agent.id}/dynamic-values`, { values }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      qc.invalidateQueries({ queryKey: ["prompt-versions", agent.id] });
+      notifications.show({ message: "Configurações salvas com sucesso!", color: "green", icon: <IconCheck size={16} /> });
+    },
+    onError: () => notifications.show({ message: "Erro ao salvar", color: "red" }),
+  });
+
+  // Build prompt preview by substituting values into the current agent prompt
+  const previewPrompt = Object.entries(values).reduce(
+    (acc, [key, val]) => acc.replaceAll(`{{${key}}}`, val || `{{${key}}}`),
+    agent.prompt
+  );
+
+  const fields = (data?.fields ?? []) as DynamicField[];
+  const autoFill = data?.autoFill ?? {};
+
+  if (isLoading) return <Center py="xl"><Loader size="sm" /></Center>;
+
+  if (fields.length === 0) {
+    return (
+      <Stack gap="md" p="md">
+        <Alert icon={<IconInfoCircle size={16} />} color="blue" radius="md">
+          Este agente não possui campos configuráveis. O prompt é gerenciado pelo administrador da plataforma.
+        </Alert>
+        <Group justify="flex-end">
+          <Button variant="subtle" onClick={onClose}>Fechar</Button>
+        </Group>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="md" p="md">
+      <Alert icon={<IconShieldLock size={16} />} color="blue" variant="light" radius="md">
+        <Text size="sm">Você pode personalizar os dados da sua empresa usados pelo agente. O texto base do prompt é gerenciado pelo administrador da plataforma.</Text>
+      </Alert>
+
+      {fields.map((field) => {
+        const isAutoFilled = autoFill[field.key] && autoFill[field.key] === values[field.key];
+        const InputComp = field.type === "textarea" ? Textarea : TextInput;
+        return (
+          <Box key={field.key}>
+            <InputComp
+              label={
+                <Group gap={6}>
+                  {field.label}
+                  {field.required && <Text span c="red" size="xs">*</Text>}
+                  {isAutoFilled && (
+                    <Badge size="xs" color="teal" variant="light" leftSection={<IconCheck size={9} />}>
+                      preenchido automaticamente
+                    </Badge>
+                  )}
+                </Group>
+              }
+              description={field.description}
+              placeholder={field.placeholder ?? `Valor para {{${field.key}}}`}
+              value={values[field.key] ?? ""}
+              onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.currentTarget.value }))}
+              minRows={field.type === "textarea" ? 3 : undefined}
+            />
+          </Box>
+        );
+      })}
+
+      {/* Prompt preview */}
+      <Box>
+        <Button
+          variant="subtle" size="xs" color="gray"
+          leftSection={showPreview ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+          onClick={togglePreview}
+        >
+          {showPreview ? "Ocultar preview" : "Ver como o agente vai usar esses dados"}
+        </Button>
+        <Collapse in={showPreview}>
+          <Paper mt="xs" p="md" radius="md" style={{ background: "#0f172a", border: "1px solid #1e293b", maxHeight: 300, overflow: "auto" }}>
+            <Text size="xs" style={{ fontFamily: "monospace", color: "#e2e8f0", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+              {previewPrompt}
+            </Text>
+          </Paper>
+        </Collapse>
+      </Box>
+
+      <Group justify="flex-end" pt="xs">
+        <Button variant="subtle" onClick={onClose}>Cancelar</Button>
+        <Button leftSection={<IconDeviceFloppy size={15} />} loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+          Salvar configurações
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+// ── Full prompt editor (super_admin only) ─────────────────────────────────────
 function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void }) {
   const qc = useQueryClient();
   const isMobile = useMediaQuery("(max-width: 768px)") ?? false;
@@ -108,11 +218,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
   });
 
   const saveMutation = useMutation({
-    mutationFn: () => api.post(`/agents/${agent.id}/prompt-versions`, {
-      prompt: promptText,
-      label: saveLabel.trim() || undefined,
-      keywords,
-    }),
+    mutationFn: () => api.post(`/agents/${agent.id}/prompt-versions`, { prompt: promptText, label: saveLabel.trim() || undefined, keywords }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
       qc.invalidateQueries({ queryKey: ["prompt-versions", agent.id] });
@@ -130,7 +236,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
       setPromptText(v?.prompt ?? promptText);
       qc.invalidateQueries({ queryKey: ["agents"] });
       qc.invalidateQueries({ queryKey: ["prompt-versions", agent.id] });
-      notifications.show({ message: `v${v?.version} restaurada com sucesso!`, color: "blue", icon: <IconRestore size={16} /> });
+      notifications.show({ message: `v${v?.version} restaurada!`, color: "blue" });
       setRestoring(null);
     },
     onError: () => { notifications.show({ message: "Erro ao restaurar versão", color: "red" }); setRestoring(null); },
@@ -142,10 +248,8 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
     setKwInput("");
   }
 
-  // Extract {{variables}} from prompt text
   const vars = Array.from(new Set([...promptText.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1])));
 
-  // Highlight {{vars}} in a plain text display (used for visual reference, not editable)
   function HistorySidebar() {
     return (
       <Stack gap={0} style={{ height: "100%" }}>
@@ -154,7 +258,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
             <ThemeIcon size={28} radius="md" color="violet" variant="light"><IconHistory size={14} /></ThemeIcon>
             <Box>
               <Text size="sm" fw={600}>Histórico</Text>
-              <Text size="xs" c="dimmed">{versions?.length ?? 0} versões salvas</Text>
+              <Text size="xs" c="dimmed">{versions?.length ?? 0} versões</Text>
             </Box>
           </Group>
         </Box>
@@ -162,64 +266,25 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
           <Stack gap={0} p="xs">
             {versionsLoading && <Center py="xl"><Loader size="sm" /></Center>}
             {!versionsLoading && (!versions || versions.length === 0) && (
-              <Text size="xs" c="dimmed" ta="center" py="xl">
-                Nenhuma versão salva ainda.<br />Salve uma versão para começar o histórico.
-              </Text>
+              <Text size="xs" c="dimmed" ta="center" py="xl">Nenhuma versão ainda.<br />Salve para iniciar o histórico.</Text>
             )}
             {versions?.map((v, i) => {
               const isCurrent = i === 0;
               return (
-                <Box
-                  key={v.id}
-                  p="sm"
-                  style={{
-                    borderRadius: 8,
-                    background: isCurrent ? "var(--mantine-color-blue-0)" : "transparent",
-                    border: isCurrent ? "1px solid var(--mantine-color-blue-2)" : "1px solid transparent",
-                    marginBottom: 4,
-                  }}
-                >
+                <Box key={v.id} p="sm" mb={4} style={{ borderRadius: 8, background: isCurrent ? "var(--mantine-color-blue-0)" : "transparent", border: isCurrent ? "1px solid var(--mantine-color-blue-2)" : "1px solid transparent" }}>
                   <Group justify="space-between" mb={4} wrap="nowrap">
                     <Group gap={6}>
-                      <Badge size="xs" color={isCurrent ? "blue" : "gray"} variant={isCurrent ? "filled" : "light"}>
-                        v{v.version}
-                      </Badge>
+                      <Badge size="xs" color={isCurrent ? "blue" : "gray"} variant={isCurrent ? "filled" : "light"}>v{v.version}</Badge>
                       {isCurrent && <Badge size="xs" color="green" variant="light">atual</Badge>}
                     </Group>
                     {!isCurrent && (
-                      <Tooltip label="Restaurar esta versão">
-                        <ActionIcon
-                          size="xs" variant="light" color="blue"
-                          loading={restoring === v.id}
-                          onClick={() => { setRestoring(v.id); restoreMutation.mutate(v.id); }}
-                        >
-                          <IconRestore size={11} />
-                        </ActionIcon>
-                      </Tooltip>
+                      <Tooltip label="Restaurar"><ActionIcon size="xs" variant="light" color="blue" loading={restoring === v.id} onClick={() => { setRestoring(v.id); restoreMutation.mutate(v.id); }}><IconRestore size={11} /></ActionIcon></Tooltip>
                     )}
                   </Group>
-                  {v.label && (
-                    <Group gap={4} mb={2}>
-                      <IconTag size={10} color="var(--mantine-color-dimmed)" />
-                      <Text size="xs" fw={500} c="dimmed">{v.label}</Text>
-                    </Group>
-                  )}
-                  <Text size="xs" c="dimmed">
-                    {new Date(v.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                  </Text>
-                  <Text size="xs" c="dimmed" lineClamp={2} mt={4} style={{ fontFamily: "monospace", opacity: 0.6 }}>
-                    {v.prompt.slice(0, 80)}…
-                  </Text>
-                  {!isCurrent && (
-                    <Button
-                      size="xs" variant="subtle" color="blue" mt={4} fullWidth
-                      leftSection={<IconRestore size={12} />}
-                      loading={restoring === v.id}
-                      onClick={() => { setRestoring(v.id); restoreMutation.mutate(v.id); }}
-                    >
-                      Restaurar
-                    </Button>
-                  )}
+                  {v.label && <Group gap={4} mb={2}><IconTag size={10} color="var(--mantine-color-dimmed)" /><Text size="xs" fw={500} c="dimmed">{v.label}</Text></Group>}
+                  <Text size="xs" c="dimmed">{new Date(v.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</Text>
+                  <Text size="xs" c="dimmed" lineClamp={2} mt={4} style={{ fontFamily: "monospace", opacity: 0.6 }}>{v.prompt.slice(0, 80)}…</Text>
+                  {!isCurrent && <Button size="xs" variant="subtle" color="blue" mt={4} fullWidth leftSection={<IconRestore size={12} />} loading={restoring === v.id} onClick={() => { setRestoring(v.id); restoreMutation.mutate(v.id); }}>Restaurar</Button>}
                 </Box>
               );
             })}
@@ -235,9 +300,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
       <Box p="md" style={{ borderBottom: "1px solid var(--mantine-color-gray-2)", flexShrink: 0 }}>
         <Group justify="space-between" wrap="nowrap">
           <Group gap="sm">
-            <ThemeIcon size={36} radius="md" color={typeColors[agent.type] ?? "gray"} variant="light">
-              <IconRobot size={18} />
-            </ThemeIcon>
+            <ThemeIcon size={36} radius="md" color={typeColors[agent.type] ?? "gray"} variant="light"><IconRobot size={18} /></ThemeIcon>
             <Box>
               <Text fw={700} size="sm">{agent.name}</Text>
               <Group gap={4}>
@@ -246,40 +309,24 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
               </Group>
             </Box>
           </Group>
-          <Group gap="xs">
-            {isDirty && !showSaveLabel && (
-              <Button
-                size="sm"
-                leftSection={<IconDeviceFloppy size={15} />}
-                onClick={() => setShowSaveLabel(true)}
-              >
-                Salvar versão
-              </Button>
-            )}
-          </Group>
+          {isDirty && !showSaveLabel && (
+            <Button size="sm" leftSection={<IconDeviceFloppy size={15} />} onClick={() => setShowSaveLabel(true)}>Salvar versão</Button>
+          )}
         </Group>
 
-        {/* Save label input */}
         {showSaveLabel && (
           <Box mt="sm" p="sm" style={{ background: "var(--mantine-color-blue-0)", borderRadius: 8, border: "1px solid var(--mantine-color-blue-2)" }}>
             <Text size="xs" fw={600} mb={6} c="blue">Descreva esta versão (opcional)</Text>
             <Group gap="xs" wrap="nowrap">
-              <TI
-                size="xs"
-                placeholder="Ex: Ajustei o tom, adicionei promoção de junho..."
-                value={saveLabel}
-                onChange={(e) => setSaveLabel(e.currentTarget.value)}
-                leftSection={<IconTag size={13} />}
-                style={{ flex: 1 }}
+              <TextInput
+                size="xs" placeholder="Ex: Ajuste de tom, promoção de junho..."
+                value={saveLabel} onChange={(e) => setSaveLabel(e.currentTarget.value)}
+                leftSection={<IconTag size={13} />} style={{ flex: 1 }}
                 onKeyDown={(e) => { if (e.key === "Enter") saveMutation.mutate(); }}
                 autoFocus
               />
-              <Button size="xs" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
-                Salvar
-              </Button>
-              <Button size="xs" variant="subtle" color="gray" onClick={() => setShowSaveLabel(false)}>
-                Cancelar
-              </Button>
+              <Button size="xs" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>Salvar</Button>
+              <Button size="xs" variant="subtle" color="gray" onClick={() => setShowSaveLabel(false)}>Cancelar</Button>
             </Group>
           </Box>
         )}
@@ -287,7 +334,6 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
 
       {/* Body */}
       {isMobile ? (
-        // Mobile: tabs layout
         <Tabs defaultValue="editor" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
           <Tabs.List px="md" style={{ flexShrink: 0 }}>
             <Tabs.Tab value="editor" leftSection={<IconEdit size={13} />}>Editor</Tabs.Tab>
@@ -296,27 +342,16 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
             </Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}>
-            <EditorPanel
-              promptText={promptText} setPromptText={setPromptText}
-              keywords={keywords} setKeywords={setKeywords}
-              kwInput={kwInput} setKwInput={setKwInput}
-              addKeyword={addKeyword} vars={vars}
-            />
+            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} />
           </Tabs.Panel>
           <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <HistorySidebar />
           </Tabs.Panel>
         </Tabs>
       ) : (
-        // Desktop: side-by-side
         <Box style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
           <Box style={{ flex: 1, overflow: "auto" }}>
-            <EditorPanel
-              promptText={promptText} setPromptText={setPromptText}
-              keywords={keywords} setKeywords={setKeywords}
-              kwInput={kwInput} setKwInput={setKwInput}
-              addKeyword={addKeyword} vars={vars}
-            />
+            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} />
           </Box>
           <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <HistorySidebar />
@@ -327,10 +362,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
   );
 }
 
-function EditorPanel({
-  promptText, setPromptText, keywords, setKeywords,
-  kwInput, setKwInput, addKeyword, vars,
-}: {
+function EditorPanel({ promptText, setPromptText, keywords, setKeywords, kwInput, setKwInput, addKeyword, vars }: {
   promptText: string; setPromptText: (v: string) => void;
   keywords: string[]; setKeywords: (fn: (prev: string[]) => string[]) => void;
   kwInput: string; setKwInput: (v: string) => void;
@@ -338,22 +370,15 @@ function EditorPanel({
 }) {
   return (
     <Stack gap="md" p="md">
-      {/* Variables detected */}
       {vars.length > 0 && (
         <Paper p="xs" radius="md" style={{ background: "var(--mantine-color-violet-0)", border: "1px solid var(--mantine-color-violet-2)" }}>
           <Group gap={6}>
             <IconVariable size={13} color="var(--mantine-color-violet-6)" />
-            <Text size="xs" fw={600} c="violet.7">Variáveis detectadas no prompt:</Text>
-            {vars.map((v) => (
-              <Badge key={v} size="xs" color="violet" variant="filled" style={{ fontFamily: "monospace" }}>
-                {`{{${v}}}`}
-              </Badge>
-            ))}
+            <Text size="xs" fw={600} c="violet.7">Variáveis no prompt:</Text>
+            {vars.map((v) => <Badge key={v} size="xs" color="violet" variant="filled" style={{ fontFamily: "monospace" }}>{`{{${v}}}`}</Badge>)}
           </Group>
         </Paper>
       )}
-
-      {/* Prompt textarea */}
       <Box>
         <Group justify="space-between" mb={6}>
           <Text size="sm" fw={600}>Prompt do Agente</Text>
@@ -362,68 +387,26 @@ function EditorPanel({
         <Textarea
           value={promptText}
           onChange={(e) => setPromptText(e.currentTarget.value)}
-          minRows={16}
-          autosize
-          maxRows={40}
-          styles={{
-            input: {
-              fontFamily: "monospace",
-              fontSize: 13,
-              lineHeight: 1.6,
-              background: "#0f172a",
-              color: "#e2e8f0",
-              border: "1px solid #1e293b",
-              borderRadius: 8,
-            },
-          }}
-          placeholder={`Você é um assistente da {{empresa}}, especializado em...
-
-Seu objetivo é:
-- Atender o cliente de forma cordial
-- Apresentar os produtos disponíveis
-- Qualificar o interesse do lead
-
-Quando houver intenção de compra, incluir [TRANSBORDO].`}
+          minRows={16} autosize maxRows={40}
+          styles={{ input: { fontFamily: "monospace", fontSize: 13, lineHeight: 1.6, background: "#0f172a", color: "#e2e8f0", border: "1px solid #1e293b", borderRadius: 8 } }}
+          placeholder={`Você é um assistente da {{empresa}}, especializado em...\n\nSeu objetivo é:\n- Atender o cliente de forma cordial\n- Apresentar os produtos disponíveis\n\nQuando houver intenção de compra, incluir [TRANSBORDO].`}
         />
         <Text size="xs" c="dimmed" mt={4}>
-          Use <code style={{ background: "var(--mantine-color-gray-1)", padding: "1px 4px", borderRadius: 3 }}>{"{{variavel}}"}</code> para inserir valores dinâmicos preenchidos pela empresa.
+          Use <code style={{ background: "var(--mantine-color-gray-1)", padding: "1px 4px", borderRadius: 3 }}>{"{{variavel}}"}</code> para valores preenchidos pela empresa.
         </Text>
       </Box>
-
-      {/* Keywords */}
       <Box>
         <Text size="sm" fw={600} mb={6}>Palavras-chave de ativação</Text>
-        <Text size="xs" c="dimmed" mb={8}>
-          Mensagens contendo essas palavras disparam este agente prioritariamente.
-        </Text>
+        <Text size="xs" c="dimmed" mb={8}>Mensagens com essas palavras direcionam ao agente.</Text>
         <Group gap="xs" mb={8} wrap="wrap">
           {keywords.map((kw) => (
-            <Badge
-              key={kw} size="sm" variant="outline" color="blue"
-              rightSection={
-                <ActionIcon size={12} variant="transparent" color="red"
-                  onClick={() => setKeywords((prev) => prev.filter((k) => k !== kw))}>
-                  ×
-                </ActionIcon>
-              }
-            >
-              {kw}
-            </Badge>
+            <Badge key={kw} size="sm" variant="outline" color="blue" rightSection={<ActionIcon size={12} variant="transparent" color="red" onClick={() => setKeywords((prev) => prev.filter((k) => k !== kw))}>×</ActionIcon>}>{kw}</Badge>
           ))}
-          {keywords.length === 0 && <Text size="xs" c="dimmed">Nenhuma palavra-chave definida</Text>}
+          {keywords.length === 0 && <Text size="xs" c="dimmed">Nenhuma</Text>}
         </Group>
         <Group gap="xs" wrap="nowrap">
-          <TextInput
-            size="xs"
-            placeholder="locação, andaime, equipamento..."
-            value={kwInput}
-            onChange={(e) => setKwInput(e.currentTarget.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addKeyword(); } }}
-            style={{ flex: 1 }}
-          />
-          <Button size="xs" variant="light" onClick={addKeyword} disabled={!kwInput.trim()}>
-            <IconPlus size={13} />
-          </Button>
+          <TextInput size="xs" placeholder="locação, andaime..." value={kwInput} onChange={(e) => setKwInput(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addKeyword(); } }} style={{ flex: 1 }} />
+          <Button size="xs" variant="light" onClick={addKeyword} disabled={!kwInput.trim()}><IconPlus size={13} /></Button>
         </Group>
       </Box>
     </Stack>
@@ -432,9 +415,12 @@ Quando houver intenção de compra, incluir [TRANSBORDO].`}
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function AgentsPage() {
+  const { user } = useAuthStore();
+  const isSuperAdmin = user?.role === "super_admin";
+  const isMobile = useMediaQuery("(max-width: 768px)") ?? false;
+
   const [activating, setActivating] = useState<AgentTemplate | null>(null);
   const [editing, setEditing] = useState<Agent | null>(null);
-  const isMobile = useMediaQuery("(max-width: 768px)") ?? false;
   const qc = useQueryClient();
 
   const { data: agentsData, isLoading: loadingAgents } = useQuery<{ data: Agent[] }>({
@@ -460,6 +446,12 @@ export default function AgentsPage() {
   const agents = agentsData?.data ?? [];
   const templates = (templatesData?.data ?? []).filter((t) => !agents.some((a) => a.templateId === t.id && a.isActive));
 
+  const drawerTitle = editing
+    ? isSuperAdmin
+      ? `Editor de Prompt — ${editing.name}`
+      : `Configurar — ${editing.name}`
+    : null;
+
   return (
     <Stack gap="lg" maw={1200}>
       <Box>
@@ -469,34 +461,33 @@ export default function AgentsPage() {
 
       {activating && <ActivateModal template={activating} onClose={() => setActivating(null)} />}
 
-      {/* Prompt editor drawer */}
+      {/* Editor drawer */}
       <Drawer
         opened={!!editing}
         onClose={() => setEditing(null)}
         position="right"
-        size={isMobile ? "100%" : "70%"}
+        size={isMobile ? "100%" : isSuperAdmin ? "70%" : "520px"}
         padding={0}
         withCloseButton
-        title={null}
+        title={<Text fw={600} size="sm">{drawerTitle}</Text>}
         styles={{
-          header: { position: "absolute", top: 12, right: 12, zIndex: 10 },
-          body: { padding: 0, height: "100%", display: "flex", flexDirection: "column" },
+          header: { padding: "12px 16px", borderBottom: "1px solid var(--mantine-color-gray-2)" },
+          body: { padding: 0, height: "calc(100% - 53px)", overflow: "auto" },
         }}
       >
-        {editing && <PromptEditor agent={editing} onClose={() => setEditing(null)} />}
+        {editing && (
+          isSuperAdmin
+            ? <PromptEditor agent={editing} onClose={() => setEditing(null)} />
+            : <DynamicValuesEditor agent={editing} onClose={() => setEditing(null)} />
+        )}
       </Drawer>
 
       <Tabs defaultValue="active">
         <Tabs.List mb="md">
-          <Tabs.Tab value="active" leftSection={<IconRobot size={16} />}>
-            Meus Agentes ({agents.length})
-          </Tabs.Tab>
-          <Tabs.Tab value="templates" leftSection={<IconPlus size={16} />}>
-            Ativar Agente ({templates.length} disponíveis)
-          </Tabs.Tab>
+          <Tabs.Tab value="active" leftSection={<IconRobot size={16} />}>Meus Agentes ({agents.length})</Tabs.Tab>
+          <Tabs.Tab value="templates" leftSection={<IconPlus size={16} />}>Ativar Agente ({templates.length} disponíveis)</Tabs.Tab>
         </Tabs.List>
 
-        {/* ── Active agents ── */}
         <Tabs.Panel value="active">
           {loadingAgents ? (
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
@@ -515,31 +506,19 @@ export default function AgentsPage() {
               {agents.map((agent) => (
                 <Card key={agent.id} padding="lg" radius="lg" withBorder shadow="sm" style={{ display: "flex", flexDirection: "column" }}>
                   <Group justify="space-between" mb="md">
-                    <ThemeIcon size={40} radius="md" color={typeColors[agent.type] ?? "gray"} variant="light">
-                      <IconRobot size={20} />
-                    </ThemeIcon>
+                    <ThemeIcon size={40} radius="md" color={typeColors[agent.type] ?? "gray"} variant="light"><IconRobot size={20} /></ThemeIcon>
                     <Group gap={6}>
-                      <Badge color={agent.isActive ? "green" : "gray"} variant="light" size="sm">
-                        {agent.isActive ? "Ativo" : "Inativo"}
-                      </Badge>
+                      <Badge color={agent.isActive ? "green" : "gray"} variant="light" size="sm">{agent.isActive ? "Ativo" : "Inativo"}</Badge>
                       <Menu withinPortal position="bottom-end" shadow="sm">
-                        <Menu.Target>
-                          <ActionIcon variant="subtle" color="gray" size="sm"><IconDots size={14} /></ActionIcon>
-                        </Menu.Target>
+                        <Menu.Target><ActionIcon variant="subtle" color="gray" size="sm"><IconDots size={14} /></ActionIcon></Menu.Target>
                         <Menu.Dropdown>
                           <Menu.Item leftSection={<IconEdit size={14} />} onClick={() => setEditing(agent)}>
-                            Editar Prompt
+                            {isSuperAdmin ? "Editar Prompt" : "Configurar Agente"}
                           </Menu.Item>
-                          <Menu.Item
-                            leftSection={agent.isActive ? <IconBoltOff size={14} /> : <IconBolt size={14} />}
-                            onClick={() => toggleMutation.mutate({ id: agent.id, isActive: !agent.isActive })}
-                          >
+                          <Menu.Item leftSection={agent.isActive ? <IconBoltOff size={14} /> : <IconBolt size={14} />} onClick={() => toggleMutation.mutate({ id: agent.id, isActive: !agent.isActive })}>
                             {agent.isActive ? "Desativar" : "Ativar"}
                           </Menu.Item>
-                          <Menu.Item leftSection={<IconTrash size={14} />} color="red"
-                            onClick={() => deleteMutation.mutate(agent.id)}>
-                            Remover
-                          </Menu.Item>
+                          <Menu.Item leftSection={<IconTrash size={14} />} color="red" onClick={() => deleteMutation.mutate(agent.id)}>Remover</Menu.Item>
                         </Menu.Dropdown>
                       </Menu>
                     </Group>
@@ -549,38 +528,22 @@ export default function AgentsPage() {
                   {agent.description && <Text size="xs" c="dimmed" mb="sm" lineClamp={2}>{agent.description}</Text>}
 
                   <Group gap="xs" mb="sm">
-                    <Badge color={typeColors[agent.type] ?? "gray"} variant="light" size="xs">
-                      {typeLabels[agent.type] ?? agent.type}
-                    </Badge>
-                    <Badge color="gray" variant="outline" size="xs"
-                      leftSection={agent.scope === "external" ? <IconWorld size={10} /> : <IconLock size={10} />}>
+                    <Badge color={typeColors[agent.type] ?? "gray"} variant="light" size="xs">{typeLabels[agent.type] ?? agent.type}</Badge>
+                    <Badge color="gray" variant="outline" size="xs" leftSection={agent.scope === "external" ? <IconWorld size={10} /> : <IconLock size={10} />}>
                       {agent.scope === "external" ? "WhatsApp" : "Interno"}
                     </Badge>
-                    <Badge color="gray" variant="light" size="xs" leftSection={<IconHistory size={9} />}>
-                      v{agent.promptVersion}
-                    </Badge>
+                    <Badge color="gray" variant="light" size="xs" leftSection={<IconHistory size={9} />}>v{agent.promptVersion}</Badge>
                   </Group>
 
                   {agent.triggerKeywords.length > 0 && (
                     <Group gap={4} mb="md">
-                      {agent.triggerKeywords.slice(0, 4).map((kw) => (
-                        <Badge key={kw} size="xs" variant="outline" color="gray" leftSection={<IconBolt size={8} />}>{kw}</Badge>
-                      ))}
-                      {agent.triggerKeywords.length > 4 && (
-                        <Text size="xs" c="dimmed">+{agent.triggerKeywords.length - 4}</Text>
-                      )}
+                      {agent.triggerKeywords.slice(0, 4).map((kw) => <Badge key={kw} size="xs" variant="outline" color="gray" leftSection={<IconBolt size={8} />}>{kw}</Badge>)}
+                      {agent.triggerKeywords.length > 4 && <Text size="xs" c="dimmed">+{agent.triggerKeywords.length - 4}</Text>}
                     </Group>
                   )}
 
-                  <Button
-                    variant="light"
-                    size="xs"
-                    mt="auto"
-                    leftSection={<IconEdit size={13} />}
-                    rightSection={<IconChevronRight size={13} />}
-                    onClick={() => setEditing(agent)}
-                  >
-                    Editar Prompt
+                  <Button variant="light" size="xs" mt="auto" leftSection={isSuperAdmin ? <IconEdit size={13} /> : <IconVariable size={13} />} rightSection={<IconChevronRight size={13} />} onClick={() => setEditing(agent)}>
+                    {isSuperAdmin ? "Editar Prompt" : "Configurar Agente"}
                   </Button>
                 </Card>
               ))}
@@ -588,7 +551,6 @@ export default function AgentsPage() {
           )}
         </Tabs.Panel>
 
-        {/* ── Available templates ── */}
         <Tabs.Panel value="templates">
           {loadingTemplates ? (
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
@@ -612,11 +574,9 @@ export default function AgentsPage() {
                   <Text fw={600} size="sm" mb={4}>{t.name}</Text>
                   {t.description && <Text size="xs" c="dimmed" mb="sm" lineClamp={2}>{t.description}</Text>}
                   {t.dynamicFields.length > 0 && (
-                    <Group gap={4} mb="sm">
-                      <Badge size="xs" color="violet" variant="light" leftSection={<IconVariable size={10} />}>
-                        {t.dynamicFields.length} campo{t.dynamicFields.length > 1 ? "s" : ""} para preencher
-                      </Badge>
-                    </Group>
+                    <Badge size="xs" color="violet" variant="light" leftSection={<IconVariable size={10} />} mb="sm">
+                      {t.dynamicFields.length} campo{t.dynamicFields.length > 1 ? "s" : ""} para preencher
+                    </Badge>
                   )}
                   <Button fullWidth size="xs" mt="auto" leftSection={<IconBolt size={14} />} onClick={() => setActivating(t)}>
                     Ativar este agente
