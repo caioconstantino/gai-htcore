@@ -24,6 +24,7 @@ const templateSchema = z.object({
   triggerKeywords: z.array(z.string()).default([]),
   dynamicFields: z.array(dynamicFieldSchema).default([]),
   isActive: z.boolean().default(true),
+  autoActivate: z.boolean().default(false).optional(),
   aiProvider: z.string().max(50).nullable().optional(),
   aiModel: z.string().max(100).nullable().optional(),
 });
@@ -55,9 +56,41 @@ agentTemplatesRouter.post("/", requireRole("super_admin"), async (req, res, next
   try {
     const parsed = templateSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+
     const template = await prisma.agent.create({
       data: { ...parsed.data, isTemplate: true, companyId: null },
     });
+
+    // Auto-activate: create an instance for every existing company
+    if (template.autoActivate) {
+      const companies = await prisma.company.findMany({ select: { id: true } });
+      const existing = await prisma.agent.findMany({
+        where: { templateId: template.id },
+        select: { companyId: true },
+      });
+      const existingIds = new Set(existing.map((a) => a.companyId));
+
+      await prisma.agent.createMany({
+        data: companies
+          .filter((c) => !existingIds.has(c.id))
+          .map((c) => ({
+            companyId: c.id,
+            templateId: template.id,
+            isTemplate: false,
+            name: template.name,
+            description: template.description,
+            type: template.type,
+            scope: template.scope,
+            prompt: template.prompt,
+            triggerKeywords: template.triggerKeywords,
+            dynamicFields: template.dynamicFields as object[],
+            dynamicValues: {},
+            isActive: true,
+          })),
+        skipDuplicates: true,
+      });
+    }
+
     res.status(201).json(template);
   } catch (err) { next(err); }
 });

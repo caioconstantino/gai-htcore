@@ -58,7 +58,34 @@ companiesRouter.post("/", requireRole("super_admin"), async (req, res, next) => 
   try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+
     const company = await prisma.company.create({ data: parsed.data });
+
+    // Auto-activate all templates flagged with autoActivate for the new company
+    const autoTemplates = await prisma.agent.findMany({
+      where: { isTemplate: true, isActive: true, autoActivate: true },
+    });
+
+    if (autoTemplates.length > 0) {
+      await prisma.agent.createMany({
+        data: autoTemplates.map((t) => ({
+          companyId: company.id,
+          templateId: t.id,
+          isTemplate: false,
+          name: t.name,
+          description: t.description,
+          type: t.type,
+          scope: t.scope,
+          prompt: t.prompt,
+          triggerKeywords: t.triggerKeywords,
+          dynamicFields: t.dynamicFields as object[],
+          dynamicValues: {},
+          isActive: true,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
     res.status(201).json(company);
   } catch (err) {
     next(err);

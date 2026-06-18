@@ -85,6 +85,7 @@ model Agent {
   aiModel         String?                         // null = use company default
   isActive        Boolean  @default(true)
   isPrivate       Boolean  @default(false)   // true = whitelist de telefones obrigatória
+  autoActivate    Boolean  @default(false)   // true = instância criada automaticamente para toda empresa nova
   triggerKeywords String[] @default([])
   requiredFields  String[] @default([])
   followUpRules   Json     @default("[]")
