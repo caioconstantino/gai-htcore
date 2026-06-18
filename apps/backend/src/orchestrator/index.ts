@@ -244,17 +244,15 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   const needsHandoff = finalResponse.includes("[TRANSBORDO]");
   const cleanResponse = finalResponse.replace("[TRANSBORDO]", "").trim();
 
-  // Fire-and-forget: extract lead data from this turn and update the record.
-  // Runs after the response is ready so it never delays the WhatsApp reply.
-  extractAndUpdateLead(lead, userText, history, aiProvider).catch(() => {});
-
   history.push({ role: "user", content: userText });
   history.push({ role: "assistant", content: cleanResponse });
   await redis.setex(`conv:${convId}:history`, 86400, JSON.stringify(history.slice(-20)));
 
   const totalTokens = totalTokensIn + totalTokensOut;
 
-  await Promise.all([
+  // Run extraction concurrently with DB saves — both happen after response is built
+  const [extractionResult] = await Promise.all([
+    extractAndUpdateLead(lead, userText, history, aiProvider),
     prisma.message.create({
       data: {
         companyId,
@@ -289,6 +287,21 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
       metadata: { totalTokens, needsHandoff },
     }),
   ]);
+
+  // Log extraction result so it's visible in the orchestration log UI
+  if (!extractionResult.skipped) {
+    await orchLog({
+      ...logCtx,
+      step: "orchestrator",
+      actor: "Extrator de Lead",
+      message: extractionResult.error
+        ? `Falha na extração: ${extractionResult.error}`
+        : extractionResult.saved.length > 0
+          ? `Lead atualizado — campos: ${extractionResult.saved.join(", ")} | extraído: ${JSON.stringify(extractionResult.extracted)}`
+          : `Nenhum dado identificável nesta mensagem | extraído: ${JSON.stringify(extractionResult.extracted)}`,
+      metadata: { extracted: extractionResult.extracted, saved: extractionResult.saved },
+    });
+  }
 
   if (needsHandoff) {
     await Promise.all([

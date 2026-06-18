@@ -4,84 +4,112 @@ import type { Lead } from "@prisma/client";
 import type { AIProvider } from "../ai/types.js";
 
 interface Extracted {
-  name?: string | null;
-  companyName?: string | null;
-  city?: string | null;
-  role?: string | null;
+  name: string | null;
+  companyName: string | null;
+  city: string | null;
+  role: string | null;
+}
+
+interface ExtractionResult {
+  extracted: Extracted;
+  saved: string[];   // field names actually written to DB
+  skipped: boolean;  // true when lead already complete
+  error?: string;
 }
 
 /**
- * Silently extracts lead data (name, company, city, role) from the conversation
- * using a lightweight AI call and persists any new fields to the lead record.
+ * Reads the latest conversation turn, extracts lead identification data using
+ * a lightweight AI call, and persists any new fields to the lead record.
  *
- * Never throws — failure is logged and swallowed so the main flow is unaffected.
- * Skip if lead already has both name and companyName (nothing left to infer).
+ * Returns a result object so the caller can log it — never throws.
  */
 export async function extractAndUpdateLead(
   lead: Lead,
   userMessage: string,
   history: Array<{ role: string; content: string }>,
   aiProvider: AIProvider,
-): Promise<void> {
-  if (lead.name && lead.companyName) return;
+): Promise<ExtractionResult> {
+  const empty: Extracted = { name: null, companyName: null, city: null, role: null };
+
+  if (lead.name && lead.companyName) {
+    return { extracted: empty, saved: [], skipped: true };
+  }
 
   const recentHistory = history
-    .slice(-6)
-    .map((h) => `${h.role === "user" ? "Cliente" : "Assistente"}: ${h.content}`)
+    .slice(-8)
+    .map((h) => `${h.role === "user" ? "Cliente" : "Atendente"}: ${h.content}`)
     .join("\n");
 
-  const prompt = `Analise a conversa e extraia dados do CLIENTE (não da empresa que atende).
+  const conversationBlock = recentHistory
+    ? `${recentHistory}\nCliente: ${userMessage}`
+    : `Cliente: ${userMessage}`;
+
+  const prompt = `Analise a conversa de WhatsApp abaixo e extraia dados de identificação do CLIENTE (quem está comprando/solicitando), não da empresa atendente.
 
 CONVERSA:
-${recentHistory ? recentHistory + "\n" : ""}Cliente: ${userMessage}
+${conversationBlock}
 
-Retorne APENAS JSON válido sem texto adicional:
-{"name":null,"companyName":null,"city":null,"role":null}
+EXEMPLOS de saída esperada:
+- Cliente disse "Sou o Carlos, da Construtora ABC": {"name":"Carlos","companyName":"Construtora ABC","city":null,"role":null}
+- Cliente disse "João" após ser perguntado o nome: {"name":"João","companyName":null,"city":null,"role":null}
+- Cliente disse "de Campinas": {"name":null,"companyName":null,"city":"Campinas","role":null}
+- Sem dados identificáveis: {"name":null,"companyName":null,"city":null,"role":null}
 
-REGRAS:
-- name: primeiro nome ou nome completo que o cliente usou para se identificar (null se não mencionou)
-- companyName: empresa/negócio DO CLIENTE (null se não mencionou)
-- city: cidade mencionada pelo cliente (null se não mencionou)
-- role: cargo ou função do cliente (null se não mencionou)
-- Nunca invente dados — prefira null a incerteza`;
+CAMPOS:
+- name: nome próprio que o cliente mencionou para se identificar
+- companyName: empresa/negócio DO CLIENTE (não a empresa atendente)
+- city: cidade mencionada pelo cliente
+- role: cargo ou função do cliente
+
+Responda APENAS com JSON válido. Use null sem aspas para campos não encontrados.`;
 
   try {
     const { response } = await aiProvider.chat({
-      systemPrompt: "Você é um extrator de dados. Retorne apenas JSON válido.",
+      systemPrompt: "Você é um extrator preciso de dados estruturados. Retorne apenas JSON válido, sem markdown.",
       history: [],
       userMessage: prompt,
     });
 
-    const cleaned = response.trim().replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-    const data = JSON.parse(cleaned) as Extracted;
+    // Strip markdown code fences if present
+    const cleaned = response
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
 
-    const nameVal = data.name?.trim() || null;
-    const companyVal = data.companyName?.trim() || null;
-    const cityVal = data.city?.trim() || null;
-    const roleVal = data.role?.trim() || null;
+    const data = JSON.parse(cleaned) as Partial<Extracted>;
+
+    const extracted: Extracted = {
+      name:        typeof data.name        === "string" && data.name.trim()        ? data.name.trim()        : null,
+      companyName: typeof data.companyName === "string" && data.companyName.trim() ? data.companyName.trim() : null,
+      city:        typeof data.city        === "string" && data.city.trim()        ? data.city.trim()        : null,
+      role:        typeof data.role        === "string" && data.role.trim()        ? data.role.trim()        : null,
+    };
 
     const dbUpdate: Record<string, unknown> = {};
-    if (nameVal && !lead.name) dbUpdate.name = nameVal;
-    if (companyVal && !lead.companyName) dbUpdate.companyName = companyVal;
 
-    // Extra fields without a dedicated column go into lead.context JSON
+    if (extracted.name        && !lead.name)        dbUpdate.name        = extracted.name;
+    if (extracted.companyName && !lead.companyName) dbUpdate.companyName = extracted.companyName;
+
+    // city and role go into lead.context (no dedicated column)
     const ctxPatch: Record<string, string> = {};
-    if (cityVal) ctxPatch.city = cityVal;
-    if (roleVal) ctxPatch.role = roleVal;
-
+    if (extracted.city) ctxPatch.city = extracted.city;
+    if (extracted.role) ctxPatch.role = extracted.role;
     if (Object.keys(ctxPatch).length > 0) {
       dbUpdate.context = { ...(lead.context as Record<string, unknown>), ...ctxPatch };
     }
 
-    if (Object.keys(dbUpdate).length === 0) return;
+    const saved = Object.keys(dbUpdate);
 
-    await prisma.lead.update({ where: { id: lead.id }, data: dbUpdate });
+    if (saved.length > 0) {
+      await prisma.lead.update({ where: { id: lead.id }, data: dbUpdate });
+      logger.info("Lead updated via extraction", { leadId: lead.id, saved });
+    }
 
-    logger.info("Lead updated via extraction", {
-      leadId: lead.id,
-      fields: Object.keys(dbUpdate),
-    });
+    return { extracted, saved, skipped: false };
   } catch (err) {
-    logger.warn("Lead extraction skipped", { leadId: lead.id, reason: String(err) });
+    const error = String(err);
+    logger.warn("Lead extraction failed", { leadId: lead.id, error });
+    return { extracted: empty, saved: [], skipped: false, error };
   }
 }
