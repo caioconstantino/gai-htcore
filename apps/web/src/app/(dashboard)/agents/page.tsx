@@ -17,7 +17,7 @@ import {
   IconTrash, IconBoltOff, IconCheck, IconVariable, IconEdit,
   IconHistory, IconRestore, IconDeviceFloppy, IconTag,
   IconChevronRight, IconEye, IconEyeOff, IconInfoCircle,
-  IconShieldLock,
+  IconShieldLock, IconCrown,
 } from "@tabler/icons-react";
 
 interface DynamicField { key: string; label: string; type: string; placeholder?: string; description?: string; required: boolean; }
@@ -445,6 +445,7 @@ export default function AgentsPage() {
 
   const agents = agentsData?.data ?? [];
   const templates = (templatesData?.data ?? []).filter((t) => !agents.some((a) => a.templateId === t.id && a.isActive));
+  const hasOrchestrator = agents.some((a) => a.type === "orchestrator" && a.isActive);
 
   const drawerTitle = editing
     ? isSuperAdmin
@@ -460,6 +461,12 @@ export default function AgentsPage() {
       </Box>
 
       {activating && <ActivateModal template={activating} onClose={() => setActivating(null)} />}
+
+      {!isSuperAdmin && !loadingAgents && !hasOrchestrator && (
+        <Alert icon={<IconCrown size={16} />} color="orange" radius="md" title="Orquestrador não configurado">
+          Sua empresa precisa de um agente orquestrador para que o sistema de IA funcione. Ative o template de orquestrador na aba <strong>Ativar Agente</strong>.
+        </Alert>
+      )}
 
       {/* Editor drawer */}
       <Drawer
@@ -508,6 +515,11 @@ export default function AgentsPage() {
                   <Group justify="space-between" mb="md">
                     <ThemeIcon size={40} radius="md" color={typeColors[agent.type] ?? "gray"} variant="light"><IconRobot size={20} /></ThemeIcon>
                     <Group gap={6}>
+                      {agent.type === "orchestrator" && !isSuperAdmin && (
+                        <Tooltip label="Este agente é obrigatório para o funcionamento do sistema" withArrow>
+                          <Badge color="orange" variant="light" size="sm" leftSection={<IconCrown size={10} />}>Obrigatório</Badge>
+                        </Tooltip>
+                      )}
                       <Badge color={agent.isActive ? "green" : "gray"} variant="light" size="sm">{agent.isActive ? "Ativo" : "Inativo"}</Badge>
                       <Menu withinPortal position="bottom-end" shadow="sm">
                         <Menu.Target><ActionIcon variant="subtle" color="gray" size="sm"><IconDots size={14} /></ActionIcon></Menu.Target>
@@ -515,10 +527,14 @@ export default function AgentsPage() {
                           <Menu.Item leftSection={<IconEdit size={14} />} onClick={() => setEditing(agent)}>
                             {isSuperAdmin ? "Editar Prompt" : "Configurar Agente"}
                           </Menu.Item>
-                          <Menu.Item leftSection={agent.isActive ? <IconBoltOff size={14} /> : <IconBolt size={14} />} onClick={() => toggleMutation.mutate({ id: agent.id, isActive: !agent.isActive })}>
-                            {agent.isActive ? "Desativar" : "Ativar"}
-                          </Menu.Item>
-                          <Menu.Item leftSection={<IconTrash size={14} />} color="red" onClick={() => deleteMutation.mutate(agent.id)}>Remover</Menu.Item>
+                          {(isSuperAdmin || agent.type !== "orchestrator") && (
+                            <Menu.Item leftSection={agent.isActive ? <IconBoltOff size={14} /> : <IconBolt size={14} />} onClick={() => toggleMutation.mutate({ id: agent.id, isActive: !agent.isActive })}>
+                              {agent.isActive ? "Desativar" : "Ativar"}
+                            </Menu.Item>
+                          )}
+                          {(isSuperAdmin || agent.type !== "orchestrator") && (
+                            <Menu.Item leftSection={<IconTrash size={14} />} color="red" onClick={() => deleteMutation.mutate(agent.id)}>Remover</Menu.Item>
+                          )}
                         </Menu.Dropdown>
                       </Menu>
                     </Group>

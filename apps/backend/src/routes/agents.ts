@@ -63,10 +63,14 @@ agentsRouter.patch("/:id", async (req: AuthRequest, res, next) => {
   try {
     const parsed = agentSchema.partial().safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
-    const existing = await prisma.agent.findUnique({ where: { id: req.params.id }, select: { companyId: true } });
+    const existing = await prisma.agent.findUnique({ where: { id: req.params.id }, select: { companyId: true, type: true } });
     if (!existing) { res.status(404).json({ error: "Agente não encontrado" }); return; }
     if (req.user?.role !== "super_admin" && existing.companyId !== req.user?.companyId) {
       res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    // Company admins cannot deactivate the orchestrator — it is mandatory
+    if (req.user?.role !== "super_admin" && existing.type === "orchestrator" && parsed.data.isActive === false) {
+      res.status(403).json({ error: "O agente orquestrador é obrigatório e não pode ser desativado" }); return;
     }
     const agent = await prisma.agent.update({ where: { id: req.params.id }, data: parsed.data });
     res.json(agent);
@@ -75,10 +79,14 @@ agentsRouter.patch("/:id", async (req: AuthRequest, res, next) => {
 
 agentsRouter.delete("/:id", async (req: AuthRequest, res, next) => {
   try {
-    const existing = await prisma.agent.findUnique({ where: { id: req.params.id }, select: { companyId: true } });
+    const existing = await prisma.agent.findUnique({ where: { id: req.params.id }, select: { companyId: true, type: true } });
     if (!existing) { res.status(404).json({ error: "Agente não encontrado" }); return; }
     if (req.user?.role !== "super_admin" && existing.companyId !== req.user?.companyId) {
       res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    // Company admins cannot delete the orchestrator
+    if (req.user?.role !== "super_admin" && existing.type === "orchestrator") {
+      res.status(403).json({ error: "O agente orquestrador é obrigatório e não pode ser removido" }); return;
     }
     await prisma.agent.delete({ where: { id: req.params.id } });
     res.status(204).send();
