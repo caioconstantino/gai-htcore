@@ -162,23 +162,36 @@ agentTemplatesRouter.post("/activate", async (req: AuthRequest, res, next) => {
       return;
     }
 
-    const agent = await prisma.agent.create({
-      data: {
-        companyId,
-        templateId,
-        isTemplate: false,
-        name: template.name,
-        description: template.description,
-        type: template.type,
-        scope: template.scope,
-        prompt: resolvedPrompt,
-        triggerKeywords: template.triggerKeywords,
-        dynamicFields: template.dynamicFields as object[],
-        dynamicValues,
-        isActive: true,
-        isPrivate: template.isPrivate,
-      },
-    });
+    const [agent, templatePhones] = await Promise.all([
+      prisma.agent.create({
+        data: {
+          companyId,
+          templateId,
+          isTemplate: false,
+          name: template.name,
+          description: template.description,
+          type: template.type,
+          scope: template.scope,
+          prompt: resolvedPrompt,
+          triggerKeywords: template.triggerKeywords,
+          dynamicFields: template.dynamicFields as object[],
+          dynamicValues,
+          isActive: true,
+          isPrivate: template.isPrivate,
+        },
+      }),
+      template.isPrivate
+        ? prisma.agentPhonePermission.findMany({ where: { agentId: templateId }, select: { phone: true, label: true } })
+        : Promise.resolve([]),
+    ]);
+
+    // Copy template phone whitelist to the new instance
+    if (templatePhones.length > 0) {
+      await prisma.agentPhonePermission.createMany({
+        data: templatePhones.map((p) => ({ agentId: agent.id, phone: p.phone, label: p.label })),
+        skipDuplicates: true,
+      });
+    }
 
     res.status(201).json(agent);
   } catch (err) { next(err); }

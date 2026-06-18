@@ -12,7 +12,7 @@ import { notifications } from "@mantine/notifications";
 import {
   IconRobot, IconPlus, IconDots, IconPencil, IconTrash, IconBolt,
   IconVariable, IconX, IconCheck, IconHistory, IconDeviceFloppy,
-  IconTag, IconRestore, IconEdit, IconChevronRight,
+  IconTag, IconRestore, IconEdit, IconChevronRight, IconShieldLock,
 } from "@tabler/icons-react";
 
 interface DynamicField {
@@ -224,14 +224,10 @@ function TemplateEditor({
   });
 
   const saveMutation = useMutation({
-    mutationFn: () => api.post(`/agents/${template!.id}/prompt-versions`, {
-      prompt: promptText,
-      label: saveLabel.trim() || undefined,
-      keywords,
-    }).then(() =>
-      // Also update name, description, type, scope, isActive, dynamicFields via patch
-      api.patch(`/agent-templates/${template!.id}`, { name, description, type, scope, isActive, autoActivate, isPrivate, dynamicFields, triggerKeywords: keywords, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null })
-    ),
+    mutationFn: async () => {
+      await api.post(`/agents/${template!.id}/prompt-versions`, { prompt: promptText, label: saveLabel.trim() || undefined, keywords });
+      await api.patch(`/agent-templates/${template!.id}`, { name, description, type, scope, isActive, autoActivate, isPrivate, dynamicFields, triggerKeywords: keywords, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agent-templates"] });
       qc.invalidateQueries({ queryKey: ["prompt-versions", template!.id] });
@@ -335,6 +331,16 @@ function TemplateEditor({
           onChange={(e) => setIsPrivate(e.currentTarget.checked)}
           color="indigo"
         />
+        {isPrivate && (
+          <Box p="sm" style={{ background: "var(--mantine-color-indigo-0)", borderRadius: 8, border: "1px solid var(--mantine-color-indigo-2)" }}>
+            <Group gap="xs">
+              <IconShieldLock size={14} color="var(--mantine-color-indigo-6)" />
+              <Text size="xs" c="indigo.7">
+                Cada empresa define os números autorizados no painel de agentes delas.
+              </Text>
+            </Group>
+          </Box>
+        )}
 
         <Divider label="Prompt base" labelPosition="left" />
 
