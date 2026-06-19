@@ -341,7 +341,7 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
                     description={field.description}
                     placeholder={field.placeholder ?? `Valor para {{${field.key}}}`}
                     value={values[field.key] ?? ""}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.currentTarget.value }))}
+                    onChange={(e) => { const v = e.currentTarget.value; setValues((prev) => ({ ...prev, [field.key]: v })); }}
                     minRows={3}
                   />
                 ) : (
@@ -350,7 +350,7 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
                     description={field.description}
                     placeholder={field.placeholder ?? `Valor para {{${field.key}}}`}
                     value={values[field.key] ?? ""}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.currentTarget.value }))}
+                    onChange={(e) => { const v = e.currentTarget.value; setValues((prev) => ({ ...prev, [field.key]: v })); }}
                   />
                 )}
               </Box>
