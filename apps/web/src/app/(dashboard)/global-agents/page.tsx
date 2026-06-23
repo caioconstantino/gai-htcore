@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, SimpleGrid, Skeleton,
   ThemeIcon, TextInput, Textarea, Select, Switch, TagsInput, ActionIcon,
-  Menu, Divider, Paper, Tooltip, Drawer, ScrollArea, Loader, Center, Tabs,
+  Menu, Divider, Paper, Tooltip, Drawer, ScrollArea, Loader, Center, Tabs, Modal, Alert,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
@@ -13,6 +13,7 @@ import {
   IconRobot, IconPlus, IconDots, IconPencil, IconTrash, IconBolt,
   IconVariable, IconX, IconCheck, IconHistory, IconDeviceFloppy,
   IconTag, IconRestore, IconEdit, IconChevronRight, IconShieldLock,
+  IconAlertCircle, IconPower,
 } from "@tabler/icons-react";
 
 interface DynamicField {
@@ -464,6 +465,7 @@ function TemplateEditor({
 export default function GlobalAgentsPage() {
   const [editing, setEditing] = useState<AgentTemplate | undefined>();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<AgentTemplate | null>(null);
   const isMobile = useMediaQuery("(max-width: 768px)") ?? false;
   const qc = useQueryClient();
 
@@ -472,9 +474,19 @@ export default function GlobalAgentsPage() {
     queryFn: () => api.get("/agent-templates").then((r) => r.data),
   });
 
-  const deleteMutation = useMutation({
+  const deactivateMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/agent-templates/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["agent-templates"] }); notifications.show({ message: "Template desativado", color: "orange" }); },
+  });
+
+  const hardDeleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/agent-templates/${id}/hard`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["agent-templates"] });
+      notifications.show({ message: "Template excluído permanentemente", color: "red", icon: <IconTrash size={16} /> });
+      setConfirmDelete(null);
+    },
+    onError: () => notifications.show({ message: "Erro ao excluir template", color: "red" }),
   });
 
   function openNew() { setEditing(undefined); setDrawerOpen(true); }
@@ -534,7 +546,13 @@ export default function GlobalAgentsPage() {
                     <Menu.Target><ActionIcon variant="subtle" color="gray" size="sm"><IconDots size={14} /></ActionIcon></Menu.Target>
                     <Menu.Dropdown>
                       <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => openEdit(t)}>Editar</Menu.Item>
-                      <Menu.Item leftSection={<IconTrash size={14} />} color="red" onClick={() => deleteMutation.mutate(t.id)}>Desativar</Menu.Item>
+                      <Menu.Item leftSection={<IconPower size={14} />} color="orange" onClick={() => deactivateMutation.mutate(t.id)}>
+                        {t.isActive ? "Desativar" : "Ativar"}
+                      </Menu.Item>
+                      <Divider />
+                      <Menu.Item leftSection={<IconTrash size={14} />} color="red" onClick={() => setConfirmDelete(t)}>
+                        Excluir permanentemente
+                      </Menu.Item>
                     </Menu.Dropdown>
                   </Menu>
                 </Group>
@@ -581,6 +599,41 @@ export default function GlobalAgentsPage() {
           ))}
         </SimpleGrid>
       )}
+
+      {/* ── Modal: Confirmar exclusão permanente ──────────────────── */}
+      <Modal
+        opened={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        title={
+          <Group gap="xs">
+            <IconTrash size={18} color="var(--mantine-color-red-6)" />
+            <Text fw={600} c="red">Excluir Template</Text>
+          </Group>
+        }
+        size="sm"
+        radius="lg"
+      >
+        <Stack gap="md">
+          <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light" radius="md">
+            Esta ação é <strong>irreversível</strong>. O template{" "}
+            <strong>"{confirmDelete?.name}"</strong> e todas as suas instâncias nas empresas serão
+            permanentemente excluídos.
+          </Alert>
+          <Group justify="flex-end">
+            <Button variant="subtle" onClick={() => setConfirmDelete(null)} leftSection={<IconX size={14} />}>
+              Cancelar
+            </Button>
+            <Button
+              color="red"
+              loading={hardDeleteMutation.isPending}
+              leftSection={<IconTrash size={14} />}
+              onClick={() => confirmDelete && hardDeleteMutation.mutate(confirmDelete.id)}
+            >
+              Excluir definitivamente
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   );
 }

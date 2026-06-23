@@ -119,6 +119,13 @@ agentTemplatesRouter.delete("/:id", requireRole("super_admin"), async (req, res,
   } catch (err) { next(err); }
 });
 
+agentTemplatesRouter.delete("/:id/hard", requireRole("super_admin"), async (req, res, next) => {
+  try {
+    await prisma.agent.delete({ where: { id: req.params.id, isTemplate: true } });
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
+
 // Company activates a template — fills in dynamic values
 const activateSchema = z.object({
   templateId: z.string().min(1),
