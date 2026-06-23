@@ -1,7 +1,11 @@
 import { Router, type Router as ExpressRouter } from "express";
+import multer from "multer";
+import * as XLSX from "xlsx";
 import { prisma } from "../lib/prisma.js";
 import { requireRole, type AuthRequest } from "../middleware/auth.js";
 import { z } from "zod";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 export const globalProductsRouter: ExpressRouter = Router();
 
@@ -93,6 +97,78 @@ globalProductsRouter.delete("/:id", requireRole("super_admin"), async (req, res,
     res.status(204).send();
   } catch (err) { next(err); }
 });
+
+// ── XLSX import / template ────────────────────────────────────────
+
+globalProductsRouter.get("/import-template", requireRole("super_admin"), (_req, res) => {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([
+    ["Nome", "Categoria", "Descrição", "Preço Diária", "Preço Semanal", "Preço Mensal", "Mais Vendido", "Alta Receita"],
+    ["Andaime Tubular", "Andaimes", "Andaime tubular padrão", 50, 300, 900, "não", "não"],
+    ["Plataforma Tesoura Elétrica", "Plataformas", "Plataforma elevatória tipo tesoura", 200, 1000, 3500, "sim", "sim"],
+  ]);
+  ws["!cols"] = [20, 20, 30, 14, 14, 14, 14, 14].map((w) => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, ws, "Produtos");
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  res.setHeader("Content-Disposition", 'attachment; filename="modelo-produtos.xlsx"');
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.send(buf);
+});
+
+globalProductsRouter.post(
+  "/import",
+  requireRole("super_admin"),
+  upload.single("file"),
+  async (req, res, next) => {
+    try {
+      if (!req.file) { res.status(400).json({ error: "Nenhum arquivo enviado" }); return; }
+
+      const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+
+      let created = 0;
+      const errors: string[] = [];
+      const skipped: string[] = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const lineNum = i + 2;
+
+        const name = String(row["Nome"] ?? "").trim();
+        const category = String(row["Categoria"] ?? "").trim();
+        const description = row["Descrição"] ? String(row["Descrição"]).trim() : null;
+        const dailyRaw = row["Preço Diária"];
+        const weeklyRaw = row["Preço Semanal"];
+        const monthlyRaw = row["Preço Mensal"];
+        const isMostSold = ["sim", "yes", "1", "true"].includes(String(row["Mais Vendido"] ?? "").toLowerCase());
+        const isHighRevenue = ["sim", "yes", "1", "true"].includes(String(row["Alta Receita"] ?? "").toLowerCase());
+
+        if (!name) { errors.push(`Linha ${lineNum}: Nome obrigatório`); continue; }
+        if (!name || name.length < 2) { errors.push(`Linha ${lineNum}: Nome muito curto`); continue; }
+        if (!category) { errors.push(`Linha ${lineNum}: Categoria obrigatória`); continue; }
+
+        const dailyPrice = Number(dailyRaw);
+        if (isNaN(dailyPrice) || dailyPrice < 0) { errors.push(`Linha ${lineNum}: Preço Diária inválido`); continue; }
+
+        const weeklyPrice = weeklyRaw != null && weeklyRaw !== "" && weeklyRaw !== 0 ? Number(weeklyRaw) : null;
+        const monthlyPrice = monthlyRaw != null && monthlyRaw !== "" && monthlyRaw !== 0 ? Number(monthlyRaw) : null;
+
+        const existing = await prisma.product.findFirst({
+          where: { name: { equals: name, mode: "insensitive" }, isGlobal: true },
+        });
+        if (existing) { skipped.push(name); continue; }
+
+        await prisma.product.create({
+          data: { name, category, description, dailyPrice, weeklyPrice, monthlyPrice, isMostSold, isHighRevenue, isGlobal: true, companyId: null },
+        });
+        created++;
+      }
+
+      res.json({ created, skipped: skipped.length, skippedNames: skipped, errors });
+    } catch (err) { next(err); }
+  }
+);
 
 // ── Company product selection ─────────────────────────────────────
 
