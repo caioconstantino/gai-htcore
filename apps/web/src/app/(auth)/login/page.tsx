@@ -49,10 +49,7 @@ export default function LoginPage() {
       <Box style={{ width: "100%", maxWidth: 420 }}>
         <Center mb="xl">
           <Stack align="center" gap="xs">
-            <Image src="/logo-gai.png" alt="G.AI" width={80} height={80} style={{ borderRadius: 18 }} />
-            <Title order={1} c="white" style={{ fontSize: 36, letterSpacing: -1 }}>
-              G.AI
-            </Title>
+            <Image src="/logo-gai.png" alt="G.AI" width={765} height={326} style={{ height: 64, width: "auto" }} />
             <Text c="blue.2" size="sm">Infraestrutura Comercial Inteligente</Text>
           </Stack>
         </Center>
