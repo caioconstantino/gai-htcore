@@ -4,11 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
+import Image from "next/image";
 import {
   Box, Button, Center, Paper, PasswordInput, Stack,
-  Text, TextInput, Title, Alert, ThemeIcon,
+  Text, TextInput, Title, Alert,
 } from "@mantine/core";
-import { IconBolt, IconAlertCircle } from "@tabler/icons-react";
+import { IconAlertCircle } from "@tabler/icons-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -48,9 +49,7 @@ export default function LoginPage() {
       <Box style={{ width: "100%", maxWidth: 420 }}>
         <Center mb="xl">
           <Stack align="center" gap="xs">
-            <ThemeIcon size={64} radius="xl" color="blue" variant="filled">
-              <IconBolt size={32} />
-            </ThemeIcon>
+            <Image src="/logo-gai.png" alt="G.AI" width={80} height={80} style={{ borderRadius: 18 }} />
             <Title order={1} c="white" style={{ fontSize: 36, letterSpacing: -1 }}>
               G.AI
             </Title>

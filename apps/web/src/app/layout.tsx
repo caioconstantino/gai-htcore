@@ -7,6 +7,7 @@ import "@mantine/notifications/styles.css";
 export const metadata: Metadata = {
   title: "G.AI — Infraestrutura Comercial Inteligente",
   description: "Plataforma de agentes de IA para locadoras de equipamentos",
+  icons: { icon: "/icon.png", shortcut: "/icon.png", apple: "/icon.png" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -1,9 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/store/auth";
-import { Box, Stack, Text, ThemeIcon, UnstyledButton, Group, Avatar } from "@mantine/core";
+import { Box, Stack, Text, UnstyledButton, Group, Avatar } from "@mantine/core";
 import {
   IconLayoutDashboard, IconBuilding, IconUsers, IconCreditCard, IconCurrencyDollar,
   IconBolt, IconRobot, IconBook2, IconHeadset, IconFileSearch,
@@ -88,9 +89,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       {/* Logo */}
       <Box p="md" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
         <Group gap="sm">
-          <ThemeIcon size={34} radius="md" color="blue" variant="filled">
-            <IconBolt size={18} />
-          </ThemeIcon>
+          <Image src="/logo-gai.png" alt="G.AI" width={34} height={34} style={{ borderRadius: 8 }} />
           <Box>
             <Text fw={700} c="white" size="sm" lh={1}>G.AI</Text>
             {isSuperAdmin
