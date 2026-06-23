@@ -25,6 +25,7 @@ model Company {
   plan                  String        @default("trial")
   logoUrl               String?
   primaryColor          String?
+  metadata              Json          @default("{}")
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 

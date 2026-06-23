@@ -13,6 +13,21 @@ const createSchema = z.object({
   userLimit: z.number().int().min(1).default(10),
 });
 
+const metadataSchema = z.object({
+  nomeFantasia:            z.string().max(300).optional(),
+  razaoSocial:             z.string().max(300).optional(),
+  cnpj:                    z.string().max(20).optional(),
+  enderecoSede:            z.string().max(500).optional(),
+  linkMaps:                z.string().max(1000).optional(),
+  telefoneContato:         z.string().max(30).optional(),
+  whatsappNumero:          z.string().max(30).optional(),
+  website:                 z.string().max(300).optional(),
+  proprietarioResponsavel: z.string().max(200).optional(),
+  ramoAtuacao:             z.string().max(200).optional(),
+  fundacao:                z.string().max(50).optional(),
+  socios:                  z.string().max(1000).optional(),
+}).partial();
+
 const updateSchema = z.object({
   name: z.string().min(2).max(200).optional(),
   plan: z.enum(["trial", "basic", "pro", "enterprise"]).optional(),
@@ -24,6 +39,7 @@ const updateSchema = z.object({
   aiProvider: z.string().max(50).optional(),
   aiModel: z.string().max(100).optional(),
   primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  metadata: metadataSchema.optional(),
 });
 
 companiesRouter.get("/", requireRole("super_admin"), async (req, res, next) => {

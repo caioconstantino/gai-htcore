@@ -4,21 +4,28 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import {
-  Box, Card, Text, Title, Stack, Group, ThemeIcon, TextInput, Select,
+  Box, Card, Text, Title, Stack, Group, ThemeIcon, TextInput, Textarea, Select,
   Button, Divider, Badge, Progress, PasswordInput, CopyButton, ActionIcon,
-  Tooltip, Code,
+  Tooltip, Code, SimpleGrid,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import {
   IconBrandWhatsapp, IconRobot, IconBuilding, IconDeviceFloppy,
-  IconCopy, IconCheck, IconRefresh,
+  IconCopy, IconCheck, IconRefresh, IconId,
 } from "@tabler/icons-react";
+
+interface CompanyMetadata {
+  nomeFantasia?: string; razaoSocial?: string; cnpj?: string; enderecoSede?: string;
+  linkMaps?: string; telefoneContato?: string; whatsappNumero?: string; website?: string;
+  proprietarioResponsavel?: string; ramoAtuacao?: string; fundacao?: string; socios?: string;
+}
 
 interface Company {
   id: string; name: string; slug: string; plan: string; isActive: boolean;
   whatsappPhoneNumberId: string | null; aiProvider: string; aiModel: string;
   tokenLimit: number; tokensUsed: number; userLimit: number;
+  metadata: CompanyMetadata;
 }
 
 function fmt(n: number) {
@@ -37,6 +44,14 @@ export default function SettingsPage() {
     enabled: !!companyId,
   });
 
+  const infoForm = useForm<CompanyMetadata>({
+    initialValues: {
+      nomeFantasia: "", razaoSocial: "", cnpj: "", enderecoSede: "", linkMaps: "",
+      telefoneContato: "", whatsappNumero: "", website: "",
+      proprietarioResponsavel: "", ramoAtuacao: "", fundacao: "", socios: "",
+    },
+  });
+
   const whatsappForm = useForm({
     initialValues: { whatsappToken: "" },
   });
@@ -48,7 +63,21 @@ export default function SettingsPage() {
   useEffect(() => {
     if (company) {
       aiForm.setValues({ aiProvider: company.aiProvider ?? "openai", aiModel: company.aiModel ?? "gpt-4o-mini" });
-      // Build webhook URL for display (backend port)
+      const m = company.metadata ?? {};
+      infoForm.setValues({
+        nomeFantasia:            m.nomeFantasia ?? "",
+        razaoSocial:             m.razaoSocial ?? "",
+        cnpj:                    m.cnpj ?? "",
+        enderecoSede:            m.enderecoSede ?? "",
+        linkMaps:                m.linkMaps ?? "",
+        telefoneContato:         m.telefoneContato ?? "",
+        whatsappNumero:          m.whatsappNumero ?? "",
+        website:                 m.website ?? "",
+        proprietarioResponsavel: m.proprietarioResponsavel ?? "",
+        ramoAtuacao:             m.ramoAtuacao ?? "",
+        fundacao:                m.fundacao ?? "",
+        socios:                  m.socios ?? "",
+      });
       if (typeof window !== "undefined") {
         const backendBase = window.location.origin.replace(/:\d+$/, ":3001");
         setWebhookUrl(`${backendBase}/webhook/${company.slug}`);
@@ -103,6 +132,52 @@ export default function SettingsPage() {
           </Group>
           <Progress value={tokenPct} color={tokenPct > 80 ? "red" : tokenPct > 60 ? "orange" : "blue"} size="sm" radius="xl" />
         </Stack>
+      </Card>
+
+      {/* Informações Gerais */}
+      <Card padding="lg" radius="lg" withBorder shadow="sm">
+        <Group mb="md">
+          <ThemeIcon size={40} radius="md" color="indigo" variant="light"><IconId size={20} /></ThemeIcon>
+          <Box>
+            <Text fw={600} size="sm">Informações da Empresa</Text>
+            <Text size="xs" c="dimmed">Dados cadastrais e de contato</Text>
+          </Box>
+        </Group>
+        <form onSubmit={infoForm.onSubmit((v) => {
+          const metadata: Record<string, string> = {};
+          for (const [k, val] of Object.entries(v)) {
+            if (val && String(val).trim()) metadata[k] = String(val).trim();
+          }
+          mutation.mutate({ metadata });
+        })}>
+          <Stack gap="md">
+            <SimpleGrid cols={2} spacing="md">
+              <TextInput label="Nome Fantasia" placeholder="Ex: Locaza Rental" {...infoForm.getInputProps("nomeFantasia")} />
+              <TextInput label="Razão Social" placeholder="Ex: Locaza Locações Ltda" {...infoForm.getInputProps("razaoSocial")} />
+            </SimpleGrid>
+            <SimpleGrid cols={2} spacing="md">
+              <TextInput label="CNPJ" placeholder="00.000.000/0001-00" {...infoForm.getInputProps("cnpj")} />
+              <TextInput label="Fundação" placeholder="Ex: 2010" {...infoForm.getInputProps("fundacao")} />
+            </SimpleGrid>
+            <TextInput label="Endereço Sede" placeholder="Rua, número, bairro, cidade - UF" {...infoForm.getInputProps("enderecoSede")} />
+            <TextInput label="Link Google Maps" placeholder="https://maps.google.com/..." {...infoForm.getInputProps("linkMaps")} />
+            <SimpleGrid cols={2} spacing="md">
+              <TextInput label="Telefone de Contato" placeholder="(12) 3456-7890" {...infoForm.getInputProps("telefoneContato")} />
+              <TextInput label="WhatsApp" placeholder="(12) 91234-5678" {...infoForm.getInputProps("whatsappNumero")} />
+            </SimpleGrid>
+            <SimpleGrid cols={2} spacing="md">
+              <TextInput label="Website" placeholder="https://www.suaempresa.com.br" {...infoForm.getInputProps("website")} />
+              <TextInput label="Proprietário / Responsável" placeholder="Nome completo" {...infoForm.getInputProps("proprietarioResponsavel")} />
+            </SimpleGrid>
+            <TextInput label="Ramo de Atuação" placeholder="Ex: Locação de Equipamentos de Construção" {...infoForm.getInputProps("ramoAtuacao")} />
+            <Textarea label="Sócios" placeholder="Nome dos sócios, separados por vírgula ou em linhas" minRows={2} {...infoForm.getInputProps("socios")} />
+            <Group justify="flex-end">
+              <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending}>
+                Salvar Informações
+              </Button>
+            </Group>
+          </Stack>
+        </form>
       </Card>
 
       {/* 360dialog config */}
