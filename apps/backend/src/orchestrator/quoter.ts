@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 import type { Agent, Company, Lead, Conversation } from "@prisma/client";
 import type { AIProvider, ChatMessage } from "../ai/types.js";
@@ -151,6 +152,7 @@ export async function runQuoterAgent(input: {
     const quoteNumber = await nextQuoteNumber(company.id);
     const totalValue  = extracted.items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
 
+    // Create Quote first (no nested items — avoids Prisma client-side relation validation)
     const quote = await prisma.quote.create({
       data: {
         companyId:        company.id,
@@ -160,18 +162,17 @@ export async function runQuoterAgent(input: {
         deliveryLocation: extracted.deliveryLocation,
         notes:            extracted.notes,
         status:           "sent",
-        items: {
-          create: extracted.items.map((item) => ({
-            productName: item.productName,
-            quantity:    item.quantity,
-            unitPrice:   item.unitPrice,
-            totalPrice:  item.quantity * item.unitPrice,
-            periodDays:  item.periodDays,
-            // productId is optional — link if name matches exactly
-          })),
-        },
       },
     });
+
+    // Insert QuoteItems via raw SQL so productId can be NULL without Prisma complaining
+    for (const item of extracted.items) {
+      const itemId = randomUUID();
+      await prisma.$executeRaw`
+        INSERT INTO quote_items (id, "quoteId", "productName", quantity, "unitPrice", "totalPrice", "periodDays")
+        VALUES (${itemId}, ${quote.id}, ${item.productName}, ${item.quantity}, ${item.unitPrice}::numeric, ${item.quantity * item.unitPrice}::numeric, ${item.periodDays})
+      `;
+    }
 
     await onLog?.(specialist.name, `Orçamento #${quoteNumber} criado no banco (id: ${quote.id})`);
 
