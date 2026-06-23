@@ -26,6 +26,11 @@ const metadataSchema = z.object({
   ramoAtuacao:             z.string().max(200).optional(),
   fundacao:                z.string().max(50).optional(),
   socios:                  z.string().max(1000).optional(),
+  // G.AI config
+  tomDeVoz:                z.string().max(1000).optional(),
+  mensagemBoasVindas:      z.string().max(2000).optional(),
+  assinaturaIA:            z.string().max(300).optional(),
+  prioridadeAtendimento:   z.string().max(1000).optional(),
 }).partial();
 
 const updateSchema = z.object({

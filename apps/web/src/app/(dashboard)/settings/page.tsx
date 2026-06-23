@@ -6,19 +6,41 @@ import { useAuthStore } from "@/store/auth";
 import {
   Box, Card, Text, Title, Stack, Group, ThemeIcon, TextInput, Textarea, Select,
   Button, Divider, Badge, Progress, PasswordInput, CopyButton, ActionIcon,
-  Tooltip, Code, SimpleGrid,
+  Tooltip, Code, SimpleGrid, Radio, Paper,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import {
   IconBrandWhatsapp, IconRobot, IconBuilding, IconDeviceFloppy,
-  IconCopy, IconCheck, IconRefresh, IconId,
+  IconCopy, IconCheck, IconRefresh, IconId, IconSparkles,
 } from "@tabler/icons-react";
+
+const TOM_PRESETS = [
+  {
+    value: "profissional",
+    label: "Profissional e Consultivo",
+    desc: "Tom formal e técnico. Apresenta soluções completas, usa linguagem especializada e inspira confiança em clientes corporativos.",
+    text: "Mantenha sempre um tom profissional, consultivo e técnico. Use linguagem formal, apresente soluções embasadas e transmita segurança e competência em cada resposta.",
+  },
+  {
+    value: "agil",
+    label: "Ágil e Direto",
+    desc: "Tom objetivo e sem rodeios. Responde rápido, vai direto ao ponto e prioriza a eficiência no atendimento.",
+    text: "Seja ágil e direto ao ponto. Respostas curtas e objetivas, sem enrolação. Priorize a velocidade do atendimento e a clareza das informações.",
+  },
+  {
+    value: "amigavel",
+    label: "Amigável e Próximo",
+    desc: "Tom descontraído e humanizado. Usa linguagem acessível, trata o cliente pelo nome e cria conexão pessoal.",
+    text: "Use uma linguagem amigável, acessível e humanizada. Trate o cliente pelo nome sempre que possível, seja empático e crie uma conexão genuína em cada conversa.",
+  },
+] as const;
 
 interface CompanyMetadata {
   nomeFantasia?: string; razaoSocial?: string; cnpj?: string; enderecoSede?: string;
   linkMaps?: string; telefoneContato?: string; whatsappNumero?: string; website?: string;
   proprietarioResponsavel?: string; ramoAtuacao?: string; fundacao?: string; socios?: string;
+  tomDeVoz?: string; mensagemBoasVindas?: string; assinaturaIA?: string; prioridadeAtendimento?: string;
 }
 
 interface Company {
@@ -52,6 +74,16 @@ export default function SettingsPage() {
     },
   });
 
+  const [tomPreset, setTomPreset] = useState<string>("profissional");
+  const gaiForm = useForm({
+    initialValues: {
+      tomDeVoz:              TOM_PRESETS[0].text,
+      mensagemBoasVindas:    "",
+      assinaturaIA:          "",
+      prioridadeAtendimento: "",
+    },
+  });
+
   const whatsappForm = useForm({
     initialValues: { whatsappToken: "" },
   });
@@ -77,6 +109,16 @@ export default function SettingsPage() {
         ramoAtuacao:             m.ramoAtuacao ?? "",
         fundacao:                m.fundacao ?? "",
         socios:                  m.socios ?? "",
+      });
+      // G.AI config
+      const savedTom = m.tomDeVoz ?? TOM_PRESETS[0].text;
+      const matchedPreset = TOM_PRESETS.find((p) => p.text === savedTom);
+      setTomPreset(matchedPreset?.value ?? "custom");
+      gaiForm.setValues({
+        tomDeVoz:              savedTom,
+        mensagemBoasVindas:    m.mensagemBoasVindas ?? "",
+        assinaturaIA:          m.assinaturaIA ?? "",
+        prioridadeAtendimento: m.prioridadeAtendimento ?? "",
       });
       if (typeof window !== "undefined") {
         const backendBase = window.location.origin.replace(/:\d+$/, ":3001");
@@ -174,6 +216,108 @@ export default function SettingsPage() {
             <Group justify="flex-end">
               <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending}>
                 Salvar Informações
+              </Button>
+            </Group>
+          </Stack>
+        </form>
+      </Card>
+
+      {/* G.AI config */}
+      <Card padding="lg" radius="lg" withBorder shadow="sm">
+        <Group mb="md">
+          <ThemeIcon size={40} radius="md" color="grape" variant="light"><IconSparkles size={20} /></ThemeIcon>
+          <Box>
+            <Text fw={600} size="sm">Personalidade da G.AI</Text>
+            <Text size="xs" c="dimmed">Tom de voz, saudação e comportamento da assistente</Text>
+          </Box>
+        </Group>
+        <form onSubmit={gaiForm.onSubmit((v) => {
+          const metadata: Record<string, string> = {};
+          for (const [k, val] of Object.entries(v)) {
+            if (val && String(val).trim()) metadata[k] = String(val).trim();
+          }
+          mutation.mutate({ metadata });
+        })}>
+          <Stack gap="lg">
+            {/* Tom de Voz */}
+            <Box>
+              <Text size="sm" fw={600} mb={10}>Tom de Voz</Text>
+              <SimpleGrid cols={3} spacing="sm" mb="sm">
+                {TOM_PRESETS.map((preset) => (
+                  <Paper
+                    key={preset.value}
+                    p="sm"
+                    radius="md"
+                    withBorder
+                    style={{
+                      cursor: "pointer",
+                      borderColor: tomPreset === preset.value ? "var(--mantine-color-grape-5)" : undefined,
+                      background: tomPreset === preset.value ? "var(--mantine-color-grape-0)" : undefined,
+                      transition: "all 0.15s",
+                    }}
+                    onClick={() => {
+                      setTomPreset(preset.value);
+                      gaiForm.setFieldValue("tomDeVoz", preset.text);
+                    }}
+                  >
+                    <Group gap="xs" mb={4} wrap="nowrap">
+                      <Radio
+                        value={preset.value}
+                        checked={tomPreset === preset.value}
+                        onChange={() => {
+                          setTomPreset(preset.value);
+                          gaiForm.setFieldValue("tomDeVoz", preset.text);
+                        }}
+                        color="grape"
+                        size="xs"
+                      />
+                      <Text size="sm" fw={600}>{preset.label}</Text>
+                    </Group>
+                    <Text size="xs" c="dimmed" ml={20}>{preset.desc}</Text>
+                  </Paper>
+                ))}
+              </SimpleGrid>
+              <Textarea
+                label="Instrução de tom (editável)"
+                description="Texto enviado aos agentes. Edite para personalizar além dos modelos acima."
+                minRows={3}
+                autosize
+                {...gaiForm.getInputProps("tomDeVoz")}
+                onChange={(e) => {
+                  setTomPreset("custom");
+                  gaiForm.setFieldValue("tomDeVoz", e.currentTarget.value);
+                }}
+              />
+            </Box>
+
+            <Textarea
+              label="Mensagem de Boas-Vindas"
+              description="Enviada automaticamente no primeiro contato do lead"
+              placeholder="Olá! Bem-vindo à Locaza Rental. Sou G.AI, sua assistente comercial. Como posso ajudar na sua obra hoje?"
+              minRows={3}
+              autosize
+              {...gaiForm.getInputProps("mensagemBoasVindas")}
+            />
+
+            <TextInput
+              label="Assinatura da IA"
+              description="Opcional — adicionada ao final das mensagens quando configurado"
+              placeholder="Atenciosamente, G.AI — Equipe Locaza"
+              {...gaiForm.getInputProps("assinaturaIA")}
+            />
+
+            <Textarea
+              label="Prioridade de Atendimento"
+              description="Regra de priorização dos leads — usada pelos agentes na ordenação das respostas"
+              placeholder={'Ordem de chegada, com prioridade para "Orçamento Urgente"'}
+              minRows={2}
+              autosize
+              {...gaiForm.getInputProps("prioridadeAtendimento")}
+            />
+
+            <Group justify="flex-end">
+              <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending} color="grape">
+                Salvar Configurações G.AI
               </Button>
             </Group>
           </Stack>
