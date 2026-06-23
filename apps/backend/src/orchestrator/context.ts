@@ -171,7 +171,14 @@ export async function buildAgentContext(input: ContextInput): Promise<string> {
   const leadInfo = `Cliente: ${lead.name ?? "Não identificado"} | Empresa: ${lead.companyName ?? "Não informada"} | Temperatura: ${sentiment}
 Documento: ${lead.document ?? "Não informado"} | Cidade: ${lead.city ?? "Não informada"} | Estado: ${lead.state ?? "Não informado"}
 Endereço: ${lead.address ?? "Não informado"} | Bairro: ${lead.neighborhood ?? "Não informado"}
-Estágio: ${lead.stage} | Contexto adicional: ${JSON.stringify(lead.context)}`.trim();
+Estágio: ${lead.stage}`.trim();
+
+  // Dados extras já coletados (lead.context) formatados legível para especialistas
+  const leadCtx = lead.context as Record<string, unknown> | null ?? {};
+  const ctxEntries = Object.entries(leadCtx).filter(([, v]) => v !== null && v !== "");
+  const leadContextSection = ctxEntries.length > 0
+    ? `Dados já registrados: ${ctxEntries.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" | ")}`
+    : "";
 
   const collectCfg = agent.type === "attendance" && agent.collectFields
     ? (agent.collectFields as CollectFieldsConfig)
@@ -182,11 +189,21 @@ Estágio: ${lead.stage} | Contexto adicional: ${JSON.stringify(lead.context)}`.t
     ? `\nCATEGORIA DESTA ESPECIALIDADE: ${categoryFilter}\n`
     : "";
 
+  // Anti-repetition block — injected for all specialist agents
+  const antiRepeatSection = agent.type === "specialist" ? `
+━━━ REGRAS DE COLETA (OBRIGATÓRIO) ━━━
+ANTI-REPETIÇÃO: O histórico completo da conversa está disponível acima desta mensagem. Antes de fazer qualquer pergunta, releia o histórico e verifique o que o cliente JÁ respondeu. NUNCA repita uma pergunta para dado já fornecido.
+COLETA PROGRESSIVA: Faça UMA pergunta por vez, apenas sobre a PRÓXIMA informação ainda não fornecida. Se o cliente já informou 3 dos 4 dados necessários, pergunte SOMENTE o 4º.
+CONFIRMAÇÃO RÁPIDA: Ao receber dados parciais, confirme o que foi entendido em UMA frase e pergunte o próximo dado pendente. Ex: "Entendido — 15m, 8 torres, 1,5m. Qual o prazo de locação?"
+ORÇAMENTO IMEDIATO: Assim que tiver TODOS os dados necessários, calcule e apresente o orçamento com os valores exatos da tabela. Não peça confirmação desnecessária.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : "";
+
   return `${agent.prompt}
 ${collectSection ? `\n${collectSection}\n` : ""}${categoryHeader}
 EMPRESA: ${company.name}
 
 ${leadInfo}
+${leadContextSection ? `${leadContextSection}\n` : ""}${antiRepeatSection}
 
 ━━━ TABELA DE EQUIPAMENTOS${categoryFilter ? ` — ${categoryFilter.toUpperCase()}` : ""} ━━━
 ${productList}
@@ -195,7 +212,7 @@ ${productList}
 ${rulesText ? `${rulesText}\n\n` : ""}INSTRUÇÕES OPERACIONAIS:
 - Use APENAS os preços da tabela acima — nunca invente valores
 - Se o cliente pedir um período não listado, ofereça o período mais próximo disponível
-- Quando tiver todas as informações, gere o orçamento com os valores exatos da tabela
+- Quando tiver todas as informações, gere o orçamento com os valores exatos da tabela. Mostre: produto, quantidade, período, valor unitário e total
 - Quando o cliente aprovar o orçamento, inclua [TRANSBORDO] para transferir ao time comercial
 - Não invente produtos ou categorias que não estão na tabela`;
 }
