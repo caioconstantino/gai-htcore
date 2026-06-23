@@ -1,7 +1,12 @@
 import "dotenv/config";
 import "express-async-errors"; // monkey-patches Express to catch async errors
 
+import path from "path";
+import { fileURLToPath } from "url";
 import express from "express";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
 import helmet from "helmet";
 import cors from "cors";
 import compression from "compression";
@@ -85,6 +90,9 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// ── Static files: generated PDFs (quotes) ────────────────────────
+app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 // ── Webhook (raw body for HMAC) — before express.json() ───────────
 app.use("/webhook", webhookRouter);

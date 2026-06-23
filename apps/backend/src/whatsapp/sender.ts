@@ -92,6 +92,30 @@ export function splitMessage(text: string): string[] {
   return chunks.filter(Boolean);
 }
 
+/** Send a WhatsApp document (PDF, etc.) by public URL. */
+export async function sendWhatsAppDocument(input: {
+  apiKey:      string;
+  to:          string;
+  documentUrl: string;
+  filename:    string;
+  caption?:    string;
+}): Promise<void> {
+  const { apiKey, to, documentUrl, filename, caption } = input;
+
+  const docPayload = { link: documentUrl, filename, ...(caption ? { caption } : {}) };
+  const body = IS_V2
+    ? { messaging_product: "whatsapp", recipient_type: "individual", to, type: "document", document: docPayload }
+    : { to, type: "document", document: docPayload };
+
+  const response = await post360(apiKey, body);
+  if (!response.ok) {
+    const error = await response.text();
+    logger.error("360dialog document send error", { status: response.status, error, to, documentUrl });
+    throw new Error(`360dialog document API error ${response.status}: ${error}`);
+  }
+  logger.info("360dialog document sent", { to, filename });
+}
+
 /** Send a WhatsApp text message (single chunk). */
 async function sendSingle(apiKey: string, to: string, text: string): Promise<void> {
   const body = IS_V2

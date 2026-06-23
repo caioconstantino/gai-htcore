@@ -2,6 +2,7 @@ import type { Agent, Company, Lead, Conversation } from "@prisma/client";
 import type { AIProvider, ChatMessage } from "../ai/types.js";
 import { buildAgentContext } from "./context.js";
 import { logger } from "../lib/logger.js";
+import { runQuoterAgent } from "./quoter.js";
 
 export interface SpecialistResult {
   specialistId: string;
@@ -34,6 +35,11 @@ export async function runSpecialist(input: {
 }): Promise<SpecialistResult> {
   const { specialist, company, lead, conversation, userMessage, history, sentiment, onLog, directMode } = input;
   const aiProvider = input.getProvider ? input.getProvider(specialist) : input.aiProvider;
+
+  // Quoter agents have a dedicated flow: extract items from history, generate PDF, send via WhatsApp
+  if (specialist.type === "quoter") {
+    return runQuoterAgent({ specialist, company, lead, conversation, userMessage, history, aiProvider, getProvider: input.getProvider, sentiment, onLog, directMode });
+  }
 
   await onLog?.(specialist.name, directMode ? "Respondendo diretamente ao cliente..." : "Consultado pelo orquestrador — analisando...");
 
