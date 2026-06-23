@@ -232,6 +232,169 @@ globalProductsRouter.post(
   }
 );
 
+// ── Generate category specialist templates ────────────────────────
+
+// Domain-specific trigger keywords per known category (Portuguese + common terms)
+const CATEGORY_KEYWORDS: Record<string, string[]> = {
+  "Andaimes": ["andaime", "andaimes", "tubular", "fachadeiro", "escalonado", "ringlock", "scaffold", "prancha"],
+  "Plataformas Elevatórias": ["plataforma", "elevatória", "elevatoria", "tesoura", "articulada", "mastro", "manlift", "jirafas", "elevação aérea"],
+  "Escoramento Metálico": ["escora", "escoramento", "escoras", "cimbramento", "suporte metálico", "escorar", "laje"],
+  "Máquinas de Terraplanagem": ["terraplanagem", "escavadeira", "retroescavadeira", "niveladora", "motoniveladora", "pá carregadeira"],
+  "Equipamentos de Elevação": ["guindaste", "grua", "munck", "içar", "içamento", "crane", "talha"],
+  "Compactadores": ["compactador", "compactadora", "rolo compactador", "placa vibratória", "compactar", "compactação"],
+  "Geradores": ["gerador", "geradores", "grupo gerador", "energia elétrica", "diesel"],
+  "Ferramentas": ["ferramenta", "ferramentas", "furadeira", "martelete", "esmerilhadeira", "betoneira"],
+  "Compressores": ["compressor", "compressores", "ar comprimido", "pneumático", "jato"],
+  "Iluminação": ["iluminação", "holofote", "refletor", "torre de luz", "projetor"],
+};
+
+function buildKeywordsForCategory(category: string, productNames: string[]): string[] {
+  const known = CATEGORY_KEYWORDS[category] ?? [];
+
+  // Extract words from category name as fallback keywords
+  const fromCategoryName = category
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "") // strip accents
+    .split(/\s+/)
+    .filter((w) => w.length > 3);
+
+  // Extract up to 2 words from each product name
+  const fromProducts = productNames
+    .flatMap((name) =>
+      name.toLowerCase()
+        .normalize("NFD").replace(/[̀-ͯ]/g, "")
+        .split(/\s+/)
+        .filter((w) => w.length > 4)
+        .slice(0, 2)
+    )
+    .slice(0, 15);
+
+  return [...new Set([...known, ...fromCategoryName, ...fromProducts])];
+}
+
+function buildSpecialistPrompt(category: string): string {
+  return `Você é o especialista comercial em {{categoria}} da {{nome_empresa}}.
+
+Sua missão é entender exatamente o que o cliente precisa dentro da categoria {{categoria}}, apresentar os equipamentos disponíveis com preços precisos e fechar o orçamento.
+
+━━━ FLUXO DE ATENDIMENTO ━━━
+1. ENTENDIMENTO — Descubra qual equipamento específico o cliente precisa na categoria {{categoria}}
+2. DETALHAMENTO — Colete as informações para o orçamento:
+   - Equipamento desejado (tipo/modelo específico)
+   - Local da obra (cidade de entrega)
+   - Período de locação em dias
+   - Tipo de cliente (Pessoa Física ou Jurídica)
+3. ORÇAMENTO — Com os dados coletados, consulte a tabela de equipamentos injetada no contexto e apresente:
+   - Nome do equipamento + período solicitado + preço exato da tabela
+   - Prazo de pagamento: {{prazo_pagamento}}
+   - Só mencione desconto se o cliente pedir — máximo autorizado: {{desconto_maximo}}%
+4. FECHAMENTO — Quando o cliente confirmar o orçamento, use [TRANSBORDO] para encaminhar ao time comercial
+
+━━━ REGRAS ESSENCIAIS ━━━
+- USE APENAS os preços da tabela de equipamentos — nunca invente ou estime valores
+- Se o cliente pedir um período que não está na tabela, ofereça o período disponível mais próximo
+- Se o cliente mencionar um produto de outra categoria, informe que há especialistas específicos e oriente a perguntar ao atendimento geral
+- Área de atendimento: {{area_atendimento}}
+- Para obras fora da área de atendimento, informe a limitação e use [TRANSBORDO] se o cliente quiser prosseguir
+- Mantenha o tom profissional, consultivo e objetivo`;
+}
+
+const SPECIALIST_DYNAMIC_FIELDS = [
+  { key: "categoria", label: "Categoria de Produtos", type: "text", required: true, description: "Pré-configurado automaticamente com a categoria do especialista" },
+  { key: "nome_empresa", label: "Nome da Empresa", type: "text", required: true, placeholder: "Ex: Locaza Rental" },
+  { key: "area_atendimento", label: "Área de Atendimento", type: "textarea", required: false, placeholder: "Ex: São José dos Campos, Jacareí, Taubaté e região" },
+  { key: "prazo_pagamento", label: "Prazo de Pagamento", type: "text", required: false, placeholder: "Ex: Pessoa Física: 3 dias | Pessoa Jurídica: 7 dias" },
+  { key: "desconto_maximo", label: "Desconto Máximo (%)", type: "number", required: false, placeholder: "Ex: 5" },
+];
+
+globalProductsRouter.post("/generate-specialists", requireRole("super_admin"), async (_req, res, next) => {
+  try {
+    // Get all distinct categories that have at least one active global product
+    const categoryRows = await prisma.product.findMany({
+      where: { isGlobal: true, isActive: true },
+      select: { category: true, name: true },
+      distinct: ["category"],
+    });
+
+    if (categoryRows.length === 0) {
+      res.status(400).json({ error: "Nenhum produto no catálogo global. Importe produtos primeiro." });
+      return;
+    }
+
+    // For each category, get all product names (for keyword generation)
+    const productsByCategory = await prisma.product.groupBy({
+      by: ["category"],
+      where: { isGlobal: true, isActive: true },
+      _count: { id: true },
+    });
+    const productNamesByCategory = await Promise.all(
+      productsByCategory.map(async (g) => {
+        const names = await prisma.product.findMany({
+          where: { isGlobal: true, isActive: true, category: g.category },
+          select: { name: true },
+          take: 20,
+        });
+        return { category: g.category, names: names.map((n) => n.name), count: g._count.id };
+      })
+    );
+
+    const created: string[] = [];
+    const updated: string[] = [];
+
+    for (const { category, names } of productNamesByCategory) {
+      const templateName = `Especialista em ${category}`;
+      const prompt = buildSpecialistPrompt(category);
+      const keywords = buildKeywordsForCategory(category, names);
+
+      // Check if template already exists
+      const existing = await prisma.agent.findFirst({
+        where: { isTemplate: true, name: templateName },
+        select: { id: true },
+      });
+
+      if (existing) {
+        await prisma.agent.update({
+          where: { id: existing.id },
+          data: {
+            prompt,
+            triggerKeywords: keywords,
+            dynamicFields: SPECIALIST_DYNAMIC_FIELDS,
+            dynamicValues: { categoria: category },
+            description: `Especialista comercial para a categoria ${category}. Apresenta produtos, calcula orçamentos e fecha negócios.`,
+          },
+        });
+        updated.push(templateName);
+      } else {
+        await prisma.agent.create({
+          data: {
+            name: templateName,
+            description: `Especialista comercial para a categoria ${category}. Apresenta produtos, calcula orçamentos e fecha negócios.`,
+            type: "specialist",
+            scope: "external",
+            prompt,
+            triggerKeywords: keywords,
+            dynamicFields: SPECIALIST_DYNAMIC_FIELDS,
+            dynamicValues: { categoria: category },
+            isTemplate: true,
+            isActive: true,
+            autoActivate: false,
+            companyId: null,
+          },
+        });
+        created.push(templateName);
+      }
+    }
+
+    res.json({
+      created: created.length,
+      updated: updated.length,
+      createdNames: created,
+      updatedNames: updated,
+      categories: productNamesByCategory.map((p) => p.category),
+    });
+  } catch (err) { next(err); }
+});
+
 // ── Company product selection ─────────────────────────────────────
 
 globalProductsRouter.get("/my-products", async (req: AuthRequest, res, next) => {

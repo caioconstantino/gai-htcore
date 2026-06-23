@@ -15,7 +15,7 @@ import { notifications } from "@mantine/notifications";
 import {
   IconPackage, IconPlus, IconCheck, IconX, IconAlertCircle, IconDots,
   IconPencil, IconTrash, IconUpload, IconDownload, IconFileSpreadsheet,
-  IconCircleCheck, IconAlertTriangle,
+  IconCircleCheck, IconAlertTriangle, IconRobot,
 } from "@tabler/icons-react";
 
 // ── Periods (same order as the XLSX columns) ──────────────────────
@@ -400,6 +400,23 @@ export default function GlobalProductsPage() {
     enabled: isSuperAdmin,
   });
 
+  const generateSpecialistsMutation = useMutation({
+    mutationFn: () => api.post("/global-products/generate-specialists").then((r) => r.data as {
+      created: number; updated: number; createdNames: string[]; updatedNames: string[]; categories: string[];
+    }),
+    onSuccess: (data) => {
+      const total = data.created + data.updated;
+      notifications.show({
+        title: "Agentes especialistas gerados!",
+        message: `${data.created} criado${data.created !== 1 ? "s" : ""}, ${data.updated} atualizado${data.updated !== 1 ? "s" : ""} · ${total} categoria${total !== 1 ? "s" : ""}: ${data.categories.join(", ")}`,
+        color: "teal",
+        icon: <IconRobot size={16} />,
+        autoClose: 8000,
+      });
+    },
+    onError: () => notifications.show({ message: "Erro ao gerar agentes especialistas", color: "red" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/global-products/${id}`),
     onSuccess: () => {
@@ -466,6 +483,15 @@ export default function GlobalProductsPage() {
             </Text>
           </Box>
           <Group gap="sm">
+            <Button
+              variant="light"
+              color="teal"
+              leftSection={<IconRobot size={16} />}
+              onClick={() => generateSpecialistsMutation.mutate()}
+              loading={generateSpecialistsMutation.isPending}
+            >
+              Gerar Agentes por Categoria
+            </Button>
             <Button variant="light" leftSection={<IconFileSpreadsheet size={16} />} onClick={() => setImportOpen(true)}>
               Importar XLSX
             </Button>
