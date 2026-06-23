@@ -341,15 +341,15 @@ model Quote {
 model QuoteItem {
   id          String  @id @default(cuid())
   quoteId     String
-  productId   String
+  productId   String?
   productName String
   quantity    Int
   unitPrice   Decimal @db.Decimal(10, 2)
   totalPrice  Decimal @db.Decimal(10, 2)
   periodDays  Int
 
-  quote   Quote   @relation(fields: [quoteId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
+  quote   Quote    @relation(fields: [quoteId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
 
   @@map("quote_items")
 }
