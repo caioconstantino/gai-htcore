@@ -146,12 +146,14 @@ model Product {
   id                   String   @id @default(cuid())
   companyId            String?                     // null = produto global
   isGlobal             Boolean  @default(false)
+  code                 String?
   name                 String
   category             String
   description          String?
-  dailyPrice           Decimal  @db.Decimal(10, 2)
-  weeklyPrice          Decimal? @db.Decimal(10, 2)
-  monthlyPrice         Decimal? @db.Decimal(10, 2)
+  prices               Json     @default("{}")    // { "1": 50.00, "3": 130.00, ... } keyed by number of days
+  dailyPrice           Decimal  @default(0) @db.Decimal(10, 2) // synced with prices["1"] for compat
+  weeklyPrice          Decimal? @db.Decimal(10, 2)             // synced with prices["7"]
+  monthlyPrice         Decimal? @db.Decimal(10, 2)             // synced with prices["28"]
   minimumDays          Int      @default(1)
   freightCalculation   String   @default("by_equipment")
   requiredInfoForQuote String[] @default([])

@@ -9,25 +9,83 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 export const globalProductsRouter: ExpressRouter = Router();
 
+// ── Periods configuration ─────────────────────────────────────────
+// Order matches the user's required XLSX column order
+const PERIODS: { days: number; col: string }[] = [
+  { days: 1, col: "Diária" },
+  { days: 3, col: "03 dias" },
+  { days: 7, col: "07 dias" },
+  { days: 14, col: "14 dias" },
+  { days: 28, col: "28 dias" },
+  { days: 2, col: "02 dias" },
+  { days: 4, col: "04 dias" },
+  { days: 5, col: "05 dias" },
+  { days: 6, col: "06 dias" },
+  { days: 8, col: "08 dias" },
+  { days: 9, col: "09 dias" },
+  { days: 10, col: "10 dias" },
+  { days: 11, col: "11 dias" },
+  { days: 12, col: "12 dias" },
+  { days: 13, col: "13 dias" },
+  { days: 15, col: "15 dias" },
+  { days: 16, col: "16 dias" },
+  { days: 17, col: "17 dias" },
+  { days: 18, col: "18 dias" },
+  { days: 19, col: "19 dias" },
+  { days: 21, col: "21 dias" },
+  { days: 22, col: "22 dias" },
+  { days: 23, col: "23 dias" },
+  { days: 24, col: "24 dias" },
+  { days: 25, col: "25 dias" },
+  { days: 26, col: "26 dias" },
+  { days: 27, col: "27 dias" },
+  { days: 29, col: "29 dias" },
+  { days: 30, col: "30 dias" },
+  { days: 365, col: "365 Dias" },
+];
+
+// Parse price strings like "10", "10,00", "R$ 10,00", "1.200,50"
+function parsePrice(raw: unknown): number | null {
+  if (raw == null || raw === "" || raw === 0) return null;
+  let str = String(raw).replace(/R\$\s*/gi, "").trim();
+  if (!str || str === "0") return null;
+  if (str.includes(",")) {
+    // Brazilian format: dots are thousands separators, comma is decimal
+    str = str.replace(/\./g, "").replace(",", ".");
+  }
+  const n = parseFloat(str);
+  return isNaN(n) || n < 0 ? null : n;
+}
+
+function buildPricesFromRow(row: Record<string, unknown>): Record<string, number> {
+  const prices: Record<string, number> = {};
+  for (const { days, col } of PERIODS) {
+    const v = parsePrice(row[col]);
+    if (v !== null && v > 0) prices[String(days)] = v;
+  }
+  return prices;
+}
+
+// Derive compat fields from prices JSON
+function compatPrices(prices: Record<string, number>) {
+  return {
+    dailyPrice: prices["1"] ?? 0,
+    weeklyPrice: prices["7"] ?? null,
+    monthlyPrice: prices["28"] ?? null,
+  };
+}
+
+const pricesSchema = z.record(z.string(), z.number().min(0));
+
 const productSchema = z.object({
+  code: z.string().max(50).optional().nullable(),
   name: z.string().min(2).max(200),
-  category: z.string().min(2).max(100),
-  description: z.string().max(2000).optional(),
-  dailyPrice: z.number().min(0),
-  weeklyPrice: z.number().min(0).nullable().optional(),
-  monthlyPrice: z.number().min(0).nullable().optional(),
+  category: z.string().min(1).max(100),
+  description: z.string().max(2000).optional().nullable(),
+  prices: pricesSchema.default({}),
   isMostSold: z.boolean().default(false),
   isHighRevenue: z.boolean().default(false),
   isActive: z.boolean().default(true),
-});
-
-const suggestionSchema = z.object({
-  name: z.string().min(2).max(200),
-  category: z.string().min(2).max(100),
-  description: z.string().max(2000).optional(),
-  dailyPrice: z.number().min(0),
-  weeklyPrice: z.number().min(0).nullable().optional(),
-  monthlyPrice: z.number().min(0).nullable().optional(),
 });
 
 // ── Global catalog ────────────────────────────────────────────────
@@ -47,7 +105,6 @@ globalProductsRouter.get("/", async (req: AuthRequest, res, next) => {
       orderBy: { name: "asc" },
     });
 
-    // If company user, annotate which products they already selected
     const companyId = req.user?.role !== "super_admin" ? req.user?.companyId : undefined;
     if (companyId) {
       const selected = await prisma.companyProduct.findMany({
@@ -72,8 +129,10 @@ globalProductsRouter.post("/", requireRole("super_admin"), async (req, res, next
   try {
     const parsed = productSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+    const { prices, ...rest } = parsed.data;
+    const compat = compatPrices(prices as Record<string, number>);
     const product = await prisma.product.create({
-      data: { ...parsed.data, isGlobal: true, companyId: null },
+      data: { ...rest, prices, ...compat, isGlobal: true, companyId: null },
     });
     res.status(201).json(product);
   } catch (err) { next(err); }
@@ -83,9 +142,11 @@ globalProductsRouter.patch("/:id", requireRole("super_admin"), async (req, res, 
   try {
     const parsed = productSchema.partial().safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+    const { prices, ...rest } = parsed.data;
+    const compat = prices ? compatPrices(prices as Record<string, number>) : {};
     const product = await prisma.product.update({
       where: { id: req.params.id, isGlobal: true },
-      data: parsed.data,
+      data: { ...rest, ...(prices ? { prices } : {}), ...compat },
     });
     res.json(product);
   } catch (err) { next(err); }
@@ -101,13 +162,20 @@ globalProductsRouter.delete("/:id", requireRole("super_admin"), async (req, res,
 // ── XLSX import / template ────────────────────────────────────────
 
 globalProductsRouter.get("/import-template", requireRole("super_admin"), (_req, res) => {
+  const headers = ["Código", "Categoria", "Equipamentos", ...PERIODS.map((p) => p.col)];
+  const example1 = [
+    "AND001", "Andaimes", "Andaime Tubular 1,0m",
+    ...PERIODS.map((p) => [1, 3, 7, 14, 28].includes(p.days) ? (p.days === 1 ? 50 : p.days === 3 ? 130 : p.days === 7 ? 280 : p.days === 14 ? 490 : 840) : ""),
+  ];
+  const example2 = [
+    "PLAT001", "Plataformas", "Plataforma Tesoura Elétrica",
+    ...PERIODS.map((p) => [1, 3, 7, 14, 28].includes(p.days) ? (p.days === 1 ? 200 : p.days === 3 ? 520 : p.days === 7 ? 1100 : p.days === 14 ? 1960 : 3360) : ""),
+  ];
   const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet([
-    ["Nome", "Categoria", "Descrição", "Preço Diária", "Preço Semanal", "Preço Mensal", "Mais Vendido", "Alta Receita"],
-    ["Andaime Tubular", "Andaimes", "Andaime tubular padrão", 50, 300, 900, "não", "não"],
-    ["Plataforma Tesoura Elétrica", "Plataformas", "Plataforma elevatória tipo tesoura", 200, 1000, 3500, "sim", "sim"],
-  ]);
-  ws["!cols"] = [20, 20, 30, 14, 14, 14, 14, 14].map((w) => ({ wch: w }));
+  const ws = XLSX.utils.aoa_to_sheet([headers, example1, example2]);
+  ws["!cols"] = [10, 18, 28, ...PERIODS.map(() => ({ wch: 10 }))].map((w) =>
+    typeof w === "number" ? { wch: w } : w
+  );
   XLSX.utils.book_append_sheet(wb, ws, "Produtos");
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
   res.setHeader("Content-Disposition", 'attachment; filename="modelo-produtos.xlsx"');
@@ -135,32 +203,26 @@ globalProductsRouter.post(
         const row = rows[i];
         const lineNum = i + 2;
 
-        const name = String(row["Nome"] ?? "").trim();
+        const code = row["Código"] ? String(row["Código"]).trim() : null;
         const category = String(row["Categoria"] ?? "").trim();
-        const description = row["Descrição"] ? String(row["Descrição"]).trim() : null;
-        const dailyRaw = row["Preço Diária"];
-        const weeklyRaw = row["Preço Semanal"];
-        const monthlyRaw = row["Preço Mensal"];
-        const isMostSold = ["sim", "yes", "1", "true"].includes(String(row["Mais Vendido"] ?? "").toLowerCase());
-        const isHighRevenue = ["sim", "yes", "1", "true"].includes(String(row["Alta Receita"] ?? "").toLowerCase());
+        const name = String(row["Equipamentos"] ?? "").trim();
 
-        if (!name) { errors.push(`Linha ${lineNum}: Nome obrigatório`); continue; }
-        if (!name || name.length < 2) { errors.push(`Linha ${lineNum}: Nome muito curto`); continue; }
+        if (!name || name.length < 2) { errors.push(`Linha ${lineNum}: Nome (Equipamentos) obrigatório`); continue; }
         if (!category) { errors.push(`Linha ${lineNum}: Categoria obrigatória`); continue; }
 
-        const dailyPrice = Number(dailyRaw);
-        if (isNaN(dailyPrice) || dailyPrice < 0) { errors.push(`Linha ${lineNum}: Preço Diária inválido`); continue; }
-
-        const weeklyPrice = weeklyRaw != null && weeklyRaw !== "" && weeklyRaw !== 0 ? Number(weeklyRaw) : null;
-        const monthlyPrice = monthlyRaw != null && monthlyRaw !== "" && monthlyRaw !== 0 ? Number(monthlyRaw) : null;
+        const prices = buildPricesFromRow(row);
+        if (!prices["1"] && Object.keys(prices).length === 0) {
+          errors.push(`Linha ${lineNum}: Nenhum preço informado`); continue;
+        }
 
         const existing = await prisma.product.findFirst({
           where: { name: { equals: name, mode: "insensitive" }, isGlobal: true },
         });
         if (existing) { skipped.push(name); continue; }
 
+        const compat = compatPrices(prices);
         await prisma.product.create({
-          data: { name, category, description, dailyPrice, weeklyPrice, monthlyPrice, isMostSold, isHighRevenue, isGlobal: true, companyId: null },
+          data: { code, name, category, prices, ...compat, isGlobal: true, companyId: null },
         });
         created++;
       }
@@ -181,7 +243,6 @@ globalProductsRouter.get("/my-products", async (req: AuthRequest, res, next) => 
       include: { product: true },
       orderBy: { product: { name: "asc" } },
     });
-    // Retorna o produto com os preços específicos da empresa sobrescrevendo os de referência
     const data = items.map((i) => ({
       ...i.product,
       companyDailyPrice: i.dailyPrice,
@@ -192,7 +253,7 @@ globalProductsRouter.get("/my-products", async (req: AuthRequest, res, next) => 
   } catch (err) { next(err); }
 });
 
-const priceSchema = z.object({
+const priceOverrideSchema = z.object({
   dailyPrice: z.number().min(0).nullable().optional(),
   weeklyPrice: z.number().min(0).nullable().optional(),
   monthlyPrice: z.number().min(0).nullable().optional(),
@@ -206,7 +267,7 @@ globalProductsRouter.post("/select/:productId", async (req: AuthRequest, res, ne
     const product = await prisma.product.findUnique({ where: { id: req.params.productId, isGlobal: true, isActive: true } });
     if (!product) { res.status(404).json({ error: "Produto não encontrado no catálogo global" }); return; }
 
-    const parsed = priceSchema.safeParse(req.body);
+    const parsed = priceOverrideSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
 
     const cp = await prisma.companyProduct.upsert({
@@ -219,13 +280,12 @@ globalProductsRouter.post("/select/:productId", async (req: AuthRequest, res, ne
   } catch (err) { next(err); }
 });
 
-// Atualizar apenas os preços de um produto já selecionado
 globalProductsRouter.patch("/select/:productId", async (req: AuthRequest, res, next) => {
   try {
     const companyId = req.user?.companyId;
     if (!companyId) { res.status(403).json({ error: "Apenas empresas" }); return; }
 
-    const parsed = priceSchema.safeParse(req.body);
+    const parsed = priceOverrideSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
 
     const cp = await prisma.companyProduct.update({
@@ -250,6 +310,15 @@ globalProductsRouter.delete("/select/:productId", async (req: AuthRequest, res, 
 });
 
 // ── Product suggestions ───────────────────────────────────────────
+
+const suggestionSchema = z.object({
+  name: z.string().min(2).max(200),
+  category: z.string().min(1).max(100),
+  description: z.string().max(2000).optional(),
+  dailyPrice: z.number().min(0),
+  weeklyPrice: z.number().min(0).nullable().optional(),
+  monthlyPrice: z.number().min(0).nullable().optional(),
+});
 
 globalProductsRouter.get("/suggestions", async (req: AuthRequest, res, next) => {
   try {
@@ -295,12 +364,17 @@ globalProductsRouter.patch("/suggestions/:id/review", requireRole("super_admin")
     let approvedProductId: string | undefined;
 
     if (parsed.data.status === "approved") {
-      // Create as global product
+      const prices: Record<string, number> = {};
+      if (suggestion.dailyPrice) prices["1"] = Number(suggestion.dailyPrice);
+      if (suggestion.weeklyPrice) prices["7"] = Number(suggestion.weeklyPrice);
+      if (suggestion.monthlyPrice) prices["28"] = Number(suggestion.monthlyPrice);
+
       const newProduct = await prisma.product.create({
         data: {
           name: suggestion.name,
           category: suggestion.category,
           description: suggestion.description,
+          prices,
           dailyPrice: suggestion.dailyPrice,
           weeklyPrice: suggestion.weeklyPrice,
           monthlyPrice: suggestion.monthlyPrice,
@@ -310,7 +384,6 @@ globalProductsRouter.patch("/suggestions/:id/review", requireRole("super_admin")
       });
       approvedProductId = newProduct.id;
 
-      // Auto-select the approved product for the suggesting company
       await prisma.companyProduct.create({
         data: { companyId: suggestion.companyId, productId: newProduct.id, isActive: true },
       });
