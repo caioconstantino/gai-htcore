@@ -88,7 +88,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     <Box style={{ width: 220, minHeight: "100%", background: "#0f172a", display: "flex", flexDirection: "column", flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.06)" }}>
       {/* Logo */}
       <Box p="md" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-        <Stack gap={6}>
+        <Stack gap={6} align="flex-start">
           <Image src="/logo-gai.png" alt="G.AI" width={765} height={326} style={{ height: 28, width: "auto" }} />
           {isSuperAdmin
             ? <Text size="xs" c="blue.4" fw={600}>Painel Master</Text>
