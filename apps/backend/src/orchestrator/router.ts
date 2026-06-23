@@ -8,19 +8,24 @@ export interface RouterResult {
   outOfScopeReason?: string;
 }
 
+type HistoryEntry = { role: string; content: string };
+
 /**
  * Uses AI to determine which specialists should handle the message.
  * Also detects when the message is completely outside the agents' scope.
  * Returns all specialists as fallback on parse errors.
  *
- * @param orchestratorInstructions - The orchestrator agent's prompt, included in the
- *   router context so company-specific routing rules ("andaime → PAINEL TUBULAR") are respected.
+ * @param orchestratorInstructions - Orchestrator prompt; company routing rules are respected.
+ * @param recentHistory - Last N conversation turns so context-only messages route correctly.
+ * @param preferredSpecialistIds - IDs of specialists from the previous turn (sticky routing).
  */
 export async function routeToSpecialists(
   userMessage: string,
   specialists: Agent[],
   aiProvider: AIProvider,
   orchestratorInstructions?: string,
+  recentHistory?: HistoryEntry[],
+  preferredSpecialistIds?: string[],
 ): Promise<RouterResult> {
   if (specialists.length === 0) return { specialists: [], outOfScope: false };
   // Single specialist — no routing needed, but still check if out of scope
@@ -42,6 +47,30 @@ export async function routeToSpecialists(
     return { specialists: keywordMatches, outOfScope: false };
   }
 
+  // ── Sticky specialist (contextual follow-up) ──────────────────────
+  // If no keyword match but there are preferred specialists from the previous turn,
+  // use them as candidates. Short messages with no new topic keywords are almost
+  // always continuations of the prior exchange.
+  const noKeywordMatch = keywordMatches.length === 0;
+  const preferred = preferredSpecialistIds?.length
+    ? specialists.filter((s) => preferredSpecialistIds.includes(s.id))
+    : [];
+
+  if (noKeywordMatch && preferred.length > 0) {
+    // Check if any OTHER specialist has keywords matching this message
+    const competingMatch = specialists
+      .filter((s) => !preferredSpecialistIds!.includes(s.id))
+      .some((s) => (s.triggerKeywords as string[]).some((k) => lower.includes(k.toLowerCase())));
+
+    if (!competingMatch) {
+      logger.info("Router: sticky specialist (no keyword, no competing match)", {
+        preferred: preferred.map((s) => s.name),
+        userMessage: userMessage.slice(0, 60),
+      });
+      return { specialists: preferred, outOfScope: false };
+    }
+  }
+
   // Use matched subset as candidates if any, otherwise use all
   const candidates = keywordMatches.length > 1 ? keywordMatches : specialists;
 
@@ -57,13 +86,27 @@ export async function routeToSpecialists(
     ? `\nREGRAS DE ROTEAMENTO DO ORQUESTRADOR (seguir com prioridade máxima):\n${orchestratorInstructions.slice(0, 1000)}\n`
     : "";
 
+  // Include recent history so the AI understands contextual follow-up messages
+  const historyContext = recentHistory && recentHistory.length > 0
+    ? `\nHISTÓRICO RECENTE DA CONVERSA (use para entender o contexto da nova mensagem):\n${
+        recentHistory.slice(-6).map((m) =>
+          `[${m.role === "user" ? "cliente" : "assistente"}]: ${m.content.slice(0, 300)}`
+        ).join("\n")
+      }\n`
+    : "";
+
+  const preferredContext = preferred.length > 0
+    ? `\nESPECIALISTAS ATIVOS NA CONVERSA ATUAL: ${preferred.map((s) => `"${s.name}"`).join(", ")} — prefira esses se a mensagem for uma continuação do assunto em andamento.\n`
+    : "";
+
   const routerPrompt = `Você é um roteador de agentes. Sua única função é decidir quais especialistas devem ser consultados para responder a mensagem do cliente.
 
 ESPECIALISTAS DISPONÍVEIS:
 ${specialistList}
-${orchestratorContext}
+${orchestratorContext}${historyContext}${preferredContext}
 REGRAS GERAIS:
 - Se a mensagem for completamente fora do escopo de TODOS os especialistas, retorne specialists vazio e outOfScope: true com uma razão curta
+- Se a mensagem for uma CONTINUAÇÃO de um assunto já em andamento (resposta a pergunta anterior, detalhamento, confirmação), SEMPRE mantenha o mesmo especialista
 - Selecione 1 ou mais especialistas relevantes quando a mensagem for relacionada ao escopo
 - Em caso de dúvida, prefira incluir o especialista a rejeitar — falsos negativos são piores que falsos positivos
 - Responda SOMENTE com JSON válido, sem texto adicional

@@ -129,8 +129,19 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     });
 
     // 1. Router — determine which specialists to call (or detect out-of-scope)
+    // Load the last active specialist IDs from conversation context for sticky routing
+    const convCtx = (conversation.context ?? {}) as Record<string, unknown>;
+    const lastSpecialistIds = (convCtx.lastSpecialistIds as string[] | undefined) ?? [];
+
     await orchLog({ ...logCtx, step: "router", actor: "Router (IA)", message: "Analisando mensagem para selecionar especialistas..." });
-    const routerResult = await routeToSpecialists(userText, specialists, aiProvider, orchestratorAgent.prompt);
+    const routerResult = await routeToSpecialists(
+      userText,
+      specialists,
+      aiProvider,
+      orchestratorAgent.prompt,
+      history.slice(-6),        // recent history for contextual understanding
+      lastSpecialistIds,        // sticky: prefer last specialist on follow-up messages
+    );
 
     // Out-of-scope: none of the specialists can handle this topic
     if (routerResult.outOfScope) {
@@ -155,6 +166,18 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
         actor: "Router (IA)",
         message: `Especialistas selecionados: ${selectedSpecialists.map((s) => s.name).join(", ")}`,
         metadata: { selected: selectedSpecialists.map((s) => ({ id: s.id, name: s.name })) },
+      });
+
+      // Persist active specialists in conversation context for sticky routing on next message
+      await prisma.conversation.update({
+        where: { id: convId },
+        data: {
+          context: {
+            ...convCtx,
+            lastSpecialistIds: selectedSpecialists.map((s) => s.id),
+            lastSpecialistNames: selectedSpecialists.map((s) => s.name),
+          },
+        },
       });
 
       // 2. Specialists in parallel
