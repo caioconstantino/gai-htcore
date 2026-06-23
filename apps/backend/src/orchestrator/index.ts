@@ -130,7 +130,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
 
     // 1. Router — determine which specialists to call (or detect out-of-scope)
     await orchLog({ ...logCtx, step: "router", actor: "Router (IA)", message: "Analisando mensagem para selecionar especialistas..." });
-    const routerResult = await routeToSpecialists(userText, specialists, aiProvider);
+    const routerResult = await routeToSpecialists(userText, specialists, aiProvider, orchestratorAgent.prompt);
 
     // Out-of-scope: none of the specialists can handle this topic
     if (routerResult.outOfScope) {
