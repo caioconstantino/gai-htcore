@@ -2,7 +2,7 @@ import { Router, type Router as ExpressRouter } from "express";
 import { prisma } from "../lib/prisma.js";
 import { orchestrate } from "../orchestrator/index.js";
 import { sendWhatsAppMessage, markAsRead } from "../whatsapp/sender.js";
-import { evolutionSendMessage } from "../whatsapp/evolution-sender.js";
+import { evolutionSendMessage, evolutionSendTyping } from "../whatsapp/evolution-sender.js";
 import { logger } from "../lib/logger.js";
 import type { WhatsAppWebhookPayload, EvolutionWebhookPayload } from "../types.js";
 
@@ -86,6 +86,15 @@ webhookRouter.post("/evolution/:companySlug", async (req, res) => {
       name: contactName,
       messageId,
     });
+
+    // Show typing indicator immediately — fire-and-forget, never blocks processing
+    evolutionSendTyping({
+      baseUrl:  company.evolutionApiUrl,
+      apiKey:   company.evolutionApiKey,
+      instance: company.evolutionInstance,
+      to:       from,
+      durationMs: 20_000,
+    }).catch(() => {});
 
     const response = await orchestrate({
       companyId:       company.id,

@@ -29,6 +29,32 @@ function normalizeNumber(phone: string): string {
   return phone.replace(/\D/g, "");
 }
 
+/**
+ * Show "digitando..." (typing indicator) in the WhatsApp chat.
+ * Fire-and-forget — never blocks the main flow.
+ * Evolution API keeps the indicator active for `durationMs` milliseconds.
+ */
+export async function evolutionSendTyping(input: {
+  baseUrl:     string;
+  apiKey:      string;
+  instance:    string;
+  to:          string;
+  durationMs?: number;
+}): Promise<void> {
+  const { baseUrl, apiKey, instance, to, durationMs = 15000 } = input;
+  const url = endpoint(baseUrl, `/chat/sendPresence/${instance}`);
+  await fetch(url, {
+    method: "POST",
+    headers: { apikey: apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      number:   normalizeNumber(to),
+      presence: "composing",
+      delay:    durationMs,
+    }),
+  });
+  // No error check — typing indicator is best-effort, never critical
+}
+
 /** Send a text message via Evolution API (split into sentences like 360dialog sender). */
 export async function evolutionSendMessage(input: {
   baseUrl:      string;
