@@ -88,6 +88,10 @@ interface ContextInput {
   sentiment: string;
 }
 
+function interpolatePrompt(prompt: string, vars: Record<string, string>): string {
+  return prompt.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? `{{${key}}}`);
+}
+
 export async function buildAgentContext(input: ContextInput): Promise<string> {
   const { company, lead, conversation, agent, sentiment } = input;
 
@@ -198,7 +202,18 @@ CONFIRMAÇÃO RÁPIDA: Ao receber dados parciais, confirme o que foi entendido e
 ORÇAMENTO IMEDIATO: Assim que tiver TODOS os dados necessários, calcule e apresente o orçamento com os valores exatos da tabela. Não peça confirmação desnecessária.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : "";
 
-  return `${agent.prompt}
+  // Resolve {{variable}} placeholders in the agent prompt
+  const meta = (company.metadata ?? {}) as Record<string, string>;
+  const promptVars: Record<string, string> = {
+    ...dynamicVals,
+    nome_empresa:     company.name,
+    prazo_pagamento:  rules?.paymentMethods?.join(", ") ?? "a combinar",
+    desconto_maximo:  String(rules?.maxDiscountPercent ?? 0),
+    area_atendimento: meta.area_atendimento ?? "região de atendimento",
+  };
+  const resolvedPrompt = interpolatePrompt(agent.prompt, promptVars);
+
+  return `${resolvedPrompt}
 ${collectSection ? `\n${collectSection}\n` : ""}${categoryHeader}
 EMPRESA: ${company.name}
 

@@ -368,8 +368,20 @@ function isGreeting(text: string): boolean {
 
 function buildSynthesizerPrompt(orchestratorBasePrompt: string, specialistResults: SpecialistResult[]): string {
   const sections = specialistResults
-    .map((r) => `=== ESPECIALISTA: ${r.specialistName} (${r.specialistType}) ===\n${r.response}`)
+    .map((r) => {
+      const isQuoter = r.specialistType === "quoter";
+      const header = `=== ESPECIALISTA: ${r.specialistName} (${r.specialistType}) ===`;
+      const note = isQuoter ? "\n[AÇÃO JÁ EXECUTADA — esta resposta descreve algo que já foi feito, use-a como base]" : "";
+      return `${header}${note}\n${r.response}`;
+    })
     .join("\n\n");
+
+  // If the quoter ran and succeeded, add a hard constraint so other specialists can't contradict it
+  const quoterResult = specialistResults.find((r) => r.specialistType === "quoter");
+  const quoterSucceeded = quoterResult && quoterResult.response.includes("✅ Orçamento");
+  const quoterConstraint = quoterSucceeded
+    ? "\n- CRÍTICO: O Orçamentista já gerou e enviou o PDF do orçamento (ação consumada). Baseie sua síntese na resposta dele. NUNCA diga frases como 'não consigo gerar PDF', 'vou encaminhar ao time' ou 'pode me confirmar seu e-mail' — o PDF já foi enviado."
+    : "";
 
   return `${orchestratorBasePrompt}
 
@@ -383,5 +395,5 @@ INSTRUÇÕES DE SÍNTESE:
 - Elimine redundâncias e conflitos entre especialistas
 - Se qualquer especialista indicou [TRANSBORDO], inclua [TRANSBORDO] na sua resposta
 - Responda em português brasileiro de forma conversacional
-- FORMATO OBRIGATÓRIO: escreva UMA frase por vez, terminando cada frase com ponto, exclamação ou interrogação antes de começar a próxima. Não use listas com traços ou asteriscos. Cada ideia nova em uma frase nova.`;
+- FORMATO OBRIGATÓRIO: escreva UMA frase por vez, terminando cada frase com ponto, exclamação ou interrogação antes de começar a próxima. Não use listas com traços ou asteriscos. Cada ideia nova em uma frase nova.${quoterConstraint}`;
 }

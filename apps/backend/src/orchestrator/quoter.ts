@@ -61,14 +61,35 @@ RESPONDA SOMENTE com JSON válido, sem texto adicional:
   "clientName": "nome do cliente se mencionado"
 }`;
 
+async function loadPreviousQuoteItems(leadId: string, companyId: string): Promise<string> {
+  const recentQuotes = await prisma.quote.findMany({
+    where: { leadId, companyId },
+    orderBy: { createdAt: "desc" },
+    take: 3,
+    include: { items: { select: { productName: true, quantity: true, unitPrice: true, periodDays: true } } },
+  });
+
+  if (recentQuotes.length === 0) return "";
+
+  const lines = recentQuotes.map((q) => {
+    const itemLines = q.items.map((i) =>
+      `  - ${i.productName} × ${i.quantity} (${i.periodDays} dias) @ R$${Number(i.unitPrice).toFixed(2)}`,
+    ).join("\n");
+    return `Orçamento anterior (${q.createdAt.toLocaleDateString("pt-BR")}):\n${itemLines || "  (sem itens)"}`;
+  });
+
+  return `\nORÇAMENTOS ANTERIORES DESTA SESSÃO (use como referência se o cliente pedir para incluir itens de orçamentos anteriores):\n${lines.join("\n\n")}\n`;
+}
+
 async function extractQuoteFromConversation(
   history: ChatMessage[],
   userMessage: string,
   aiProvider: AIProvider,
   agentContext: string,
+  previousQuotesContext: string,
 ): Promise<ExtractedQuote | null> {
   const historyText = history
-    .slice(-16)
+    .slice(-20)
     .map((m) => `[${m.role === "user" ? "cliente" : "assistente"}]: ${m.content}`)
     .join("\n");
 
@@ -78,7 +99,7 @@ async function extractQuoteFromConversation(
     const { response } = await aiProvider.chat({
       systemPrompt: fullPrompt,
       history: [],
-      userMessage: `HISTÓRICO DA CONVERSA:\n${historyText}\n\nMENSAGEM ATUAL DO CLIENTE: "${userMessage}"\n\nExtraia os dados do orçamento:`,
+      userMessage: `HISTÓRICO DA CONVERSA:\n${historyText}${previousQuotesContext}\n\nMENSAGEM ATUAL DO CLIENTE: "${userMessage}"\n\nExtraia os dados do orçamento:`,
     });
 
     const jsonMatch = response.match(/\{[\s\S]*\}/);
@@ -138,8 +159,9 @@ export async function runQuoterAgent(input: {
       sentiment,
     });
 
-    // 1. Extract quote items from conversation history
-    const extracted = await extractQuoteFromConversation(history, userMessage, aiProvider, agentContext);
+    // 1. Extract quote items from conversation history (+ previous quotes for combined requests)
+    const previousQuotesContext = await loadPreviousQuoteItems(lead.id, company.id);
+    const extracted = await extractQuoteFromConversation(history, userMessage, aiProvider, agentContext, previousQuotesContext);
 
     if (!extracted) {
       base.response = "Não consegui identificar os itens do orçamento na nossa conversa. Poderia confirmar: qual equipamento, quantidade e período de locação você precisa?";

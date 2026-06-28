@@ -105,6 +105,11 @@ EXEMPLOS:
 - Cliente disse "de Campinas, CPF 123.456.789-00": {"city":"Campinas","document":"123.456.789-00"}
 - Sem dados identificáveis: {${exampleKeys}}
 
+REGRAS CRÍTICAS:
+- NUNCA extraia como companyName palavras que sejam tipos de produtos, equipamentos ou acessórios (ex: "Rodizios", "Andaimes", "Escoras", "Sapatas", "Painéis", "Tubulares"). companyName deve ser o nome de uma empresa real do cliente.
+- NUNCA extraia como name uma palavra que o cliente usou ao escolher um produto ou acessório (ex: "Rodizios", "Sapatas") — name deve ser o nome próprio de uma pessoa.
+- Se a mensagem for uma resposta a uma pergunta técnica sobre equipamento (tipo de suporte, período, quantidade), não extraia nenhum campo de identificação.
+
 Responda APENAS com JSON válido contendo os campos acima. Use null sem aspas para campos não encontrados.`;
 
   try {
