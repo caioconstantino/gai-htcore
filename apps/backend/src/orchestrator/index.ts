@@ -145,18 +145,31 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
 
     // Out-of-scope: none of the specialists can handle this topic
     if (routerResult.outOfScope) {
-      const scopeNames = specialists.map((s) => s.name).join(", ");
-      const outOfScopeReply = buildOutOfScopeReply(orchestratorAgent.prompt, scopeNames, routerResult.outOfScopeReason);
-
       await orchLog({
         ...logCtx,
         step: "router",
         actor: "Router (IA)",
-        message: `Mensagem fora do escopo dos especialistas. Motivo: ${routerResult.outOfScopeReason ?? "tema não relacionado"}`,
-        metadata: { outOfScope: true, reason: routerResult.outOfScopeReason, specialists: specialists.map((s) => s.name) },
+        message: `Mensagem fora do escopo. Motivo: ${routerResult.outOfScopeReason ?? "tema não relacionado"}`,
+        metadata: { outOfScope: true, reason: routerResult.outOfScopeReason },
       });
 
-      finalResponse = outOfScopeReply;
+      const meta = (company.metadata ?? {}) as Record<string, string>;
+
+      if (isGreeting(userText) && meta.mensagemBoasVindas) {
+        // Fast path: greeting at start of conversation → send configured welcome message
+        finalResponse = meta.mensagemBoasVindas;
+      } else {
+        // Let the orchestrator respond naturally (handles greetings, off-topic, etc.)
+        const agentContext = await buildAgentContext({ company, lead, conversation, agent: orchestratorAgent, sentiment });
+        const { response, tokensIn, tokensOut } = await agentProvider(orchestratorAgent).chat({
+          systemPrompt: agentContext,
+          history,
+          userMessage: userText,
+        });
+        totalTokensIn += tokensIn;
+        totalTokensOut += tokensOut;
+        finalResponse = response;
+      }
     } else {
       const selectedSpecialists = routerResult.specialists;
 
@@ -345,15 +358,12 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   return cleanResponse;
 }
 
-/**
- * Build a polite out-of-scope reply that explains what we CAN help with.
- */
-function buildOutOfScopeReply(orchestratorPrompt: string, specialistNames: string, reason?: string): string {
-  // Extract the business context from the orchestrator prompt (first 200 chars)
-  const context = orchestratorPrompt.slice(0, 200).replace(/\n/g, " ").trim();
-  void context; // used as context for future prompt enhancement
+const GREETING_RE = /^(oi|olá|ola|bom\s*dia|boa\s*tarde|boa\s*noite|tudo\s*(bem|bom|certo|ótimo|otimo)|como\s*(vai|você|voce)|hey|hello|hi|e\s*a[íi]|salve|opa|eae|eai)\b/i;
 
-  return `Desculpe, não consigo ajudar com esse assunto. Meu atendimento é focado em ${specialistNames}. Posso te ajudar com algo relacionado a isso?`;
+/** Returns true if the message is a short social greeting with no product query. */
+function isGreeting(text: string): boolean {
+  const t = text.trim();
+  return t.length <= 80 && GREETING_RE.test(t);
 }
 
 function buildSynthesizerPrompt(orchestratorBasePrompt: string, specialistResults: SpecialistResult[]): string {
