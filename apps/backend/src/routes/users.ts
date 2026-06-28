@@ -123,9 +123,23 @@ usersRouter.patch("/:id", async (req: AuthRequest, res, next) => {
   }
 });
 
-usersRouter.delete("/:id", requireRole("super_admin"), async (req, res, next) => {
+usersRouter.delete("/:id", requireRole("super_admin", "company_admin"), async (req: AuthRequest, res, next) => {
   try {
-    await prisma.user.delete({ where: { id: req.params.id } });
+    const { id } = req.params;
+
+    if (req.user?.role === "company_admin") {
+      if (req.user.userId === id) {
+        res.status(400).json({ error: "Você não pode excluir sua própria conta" });
+        return;
+      }
+      const target = await prisma.user.findUnique({ where: { id }, select: { companyId: true } });
+      if (!target || target.companyId !== req.user.companyId) {
+        res.status(403).json({ error: "Acesso negado" });
+        return;
+      }
+    }
+
+    await prisma.user.delete({ where: { id } });
     res.status(204).send();
   } catch (err) {
     next(err);

@@ -67,8 +67,16 @@ const stepConfig: Record<string, { color: string; icon: React.ReactNode }> = {
   info:           { color: "gray",   icon: <IconMessages size={12} /> },
 };
 
+// Parses *Nome:* prefix from manually-sent operator messages
+function parseOperatorPrefix(content: string): { sender: string; text: string } | null {
+  const m = content.match(/^\*([^*]+):\*\s*([\s\S]*)$/);
+  return m ? { sender: m[1], text: m[2] } : null;
+}
+
 function ChatBubble({ msg }: { msg: Message }) {
   const isOutbound = msg.direction === "outbound";
+  const operatorMsg = isOutbound ? parseOperatorPrefix(msg.content) : null;
+
   return (
     <Box style={{ display: "flex", justifyContent: isOutbound ? "flex-end" : "flex-start" }}>
       {!isOutbound && (
@@ -84,15 +92,22 @@ function ChatBubble({ msg }: { msg: Message }) {
           color: isOutbound ? "white" : "inherit",
         }}
       >
-        <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{msg.content}</Text>
+        {operatorMsg ? (
+          <>
+            <Text size="xs" fw={700} mb={2} style={{ opacity: 0.85 }}>{operatorMsg.sender}</Text>
+            <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{operatorMsg.text}</Text>
+          </>
+        ) : (
+          <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{msg.content}</Text>
+        )}
         <Text size="xs" mt={4} style={{ opacity: 0.6 }}>
           {new Date(msg.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
           {isOutbound && msg.status === "pending" && "  ·  aguardando"}
         </Text>
       </Paper>
       {isOutbound && (
-        <Avatar size={28} radius="xl" color="blue" ml={8} mt={2}>
-          <IconRobot size={14} />
+        <Avatar size={28} radius="xl" color={operatorMsg ? "orange" : "blue"} ml={8} mt={2}>
+          {operatorMsg ? <IconUser size={14} /> : <IconRobot size={14} />}
         </Avatar>
       )}
     </Box>

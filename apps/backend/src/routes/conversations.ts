@@ -91,14 +91,27 @@ conversationsRouter.post("/:id/send", async (req: AuthRequest, res, next) => {
       res.status(403).json({ error: "Acesso negado" }); return;
     }
 
-    // Salva a mensagem no banco
+    // Fetch sender name to prefix message (so client sees *Nome:* Mensagem in WhatsApp)
+    let senderName: string | null = null;
+    if (req.user?.userId) {
+      const sender = await prisma.user.findUnique({
+        where: { id: req.user.userId },
+        select: { name: true },
+      });
+      senderName = sender?.name ?? null;
+    }
+
+    const rawText    = message.trim();
+    const whatsappText = senderName ? `*${senderName}:* ${rawText}` : rawText;
+
+    // Salva a mensagem no banco (formato completo para consistência com o que o cliente vê)
     const saved = await prisma.message.create({
       data: {
         companyId: conversation.companyId,
         leadId: conversation.leadId,
         conversationId: conversation.id,
         direction: "outbound",
-        content: message.trim(),
+        content: whatsappText,
         type: "text",
         sentByUserId: req.user?.userId,
         status: "pending",
@@ -107,7 +120,7 @@ conversationsRouter.post("/:id/send", async (req: AuthRequest, res, next) => {
 
     // Send via whichever provider is configured
     try {
-      await dispatchMessage(conversation.company as WhatsAppCompany, conversation.lead.phone, message.trim());
+      await dispatchMessage(conversation.company as WhatsAppCompany, conversation.lead.phone, whatsappText);
       await prisma.message.update({ where: { id: saved.id }, data: { status: "delivered" } });
     } catch (sendErr) {
       // Log but don't fail — message is saved in DB regardless

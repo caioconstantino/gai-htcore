@@ -13,13 +13,18 @@ import {
 } from "@tabler/icons-react";
 
 const companyNav = [
-  { href: "/dashboard", label: "Dashboard", icon: IconLayoutDashboard },
-  { href: "/leads", label: "Leads", icon: IconUsers },
-  { href: "/conversations", label: "Conversas", icon: IconMessageCircle },
-  { href: "/agents", label: "Agentes", icon: IconRobot },
-  { href: "/products", label: "Produtos", icon: IconPackage },
-  { href: "/quotes", label: "Orçamentos", icon: IconFileText },
-  { href: "/settings", label: "Configurações", icon: IconSettings },
+  { href: "/dashboard",     label: "Dashboard",      icon: IconLayoutDashboard },
+  { href: "/leads",         label: "Leads",          icon: IconUsers },
+  { href: "/conversations", label: "Conversas",      icon: IconMessageCircle },
+  { href: "/agents",        label: "Agentes",        icon: IconRobot },
+  { href: "/products",      label: "Produtos",       icon: IconPackage },
+  { href: "/quotes",        label: "Orçamentos",     icon: IconFileText },
+  { href: "/settings",      label: "Configurações",  icon: IconSettings },
+];
+
+const adminNav = [
+  ...companyNav,
+  { href: "/users", label: "Usuários", icon: IconUsers },
 ];
 
 const masterNav = [
@@ -80,8 +85,9 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuthStore();
-  const isSuperAdmin = user?.role === "super_admin";
-  const nav = isSuperAdmin ? masterNav : companyNav;
+  const isSuperAdmin  = user?.role === "super_admin";
+  const isCompanyAdmin = user?.role === "company_admin";
+  const nav = isSuperAdmin ? masterNav : isCompanyAdmin ? adminNav : companyNav;
 
   function handleLogout() { logout(); router.push("/login"); }
 

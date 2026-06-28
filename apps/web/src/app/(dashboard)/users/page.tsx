@@ -59,7 +59,9 @@ const EMPTY_FORM: FormValues = { name: "", email: "", password: "", role: "opera
 export default function UsersPage() {
   const qc = useQueryClient();
   const { user: me } = useAuthStore();
-  const isSuperAdmin = me?.role === "super_admin";
+  const isSuperAdmin   = me?.role === "super_admin";
+  const isCompanyAdmin = me?.role === "company_admin";
+  const canManageUsers = isSuperAdmin || isCompanyAdmin;
 
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<string | null>(null);
@@ -147,9 +149,11 @@ export default function UsersPage() {
               {data?.total ?? 0} usuários cadastrados
             </Text>
           </Box>
-          <Button leftSection={<IconPlus size={16} />} onClick={openCreate}>
-            Novo Usuário
-          </Button>
+          {canManageUsers && (
+            <Button leftSection={<IconPlus size={16} />} onClick={openCreate}>
+              Novo Usuário
+            </Button>
+          )}
         </Group>
 
         {/* Filters */}
@@ -260,7 +264,7 @@ export default function UsersPage() {
                           <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => openEdit(u)}>
                             Editar
                           </Menu.Item>
-                          {isSuperAdmin && u.id !== me?.id && (
+                          {canManageUsers && u.id !== me?.id && (
                             <>
                               <Divider />
                               <Menu.Item
