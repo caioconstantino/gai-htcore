@@ -59,14 +59,12 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     });
   }
 
-  if (conversation.handedOffToHuman) return "";
-  if ((conversation as typeof conversation & { aiPaused?: boolean }).aiPaused) return "";
-
   const userText = message.text?.body ?? "";
   const convId = conversation.id;
   const logCtx = { companyId, conversationId: convId, leadPhone: from };
 
-  // Parallelize: save message + fetch history + log (all independent)
+  // Always persist the inbound message and history — even when AI is paused or handed off,
+  // so the operator can see the client's messages in the chat view.
   const [, cachedHistoryRaw] = await Promise.all([
     orchLog({ ...logCtx, step: "client_message", actor: `Cliente (${from})`, message: userText }),
     redis.get(`conv:${convId}:history`),
@@ -83,6 +81,10 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
       },
     }),
   ]);
+
+  // After saving the message, bail out if a human is in control
+  if (conversation.handedOffToHuman) return "";
+  if ((conversation as typeof conversation & { aiPaused?: boolean }).aiPaused) return "";
 
   const history: Array<{ role: "user" | "assistant" | "system"; content: string }> = cachedHistoryRaw
     ? JSON.parse(cachedHistoryRaw)
