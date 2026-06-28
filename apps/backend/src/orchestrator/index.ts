@@ -60,6 +60,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   }
 
   if (conversation.handedOffToHuman) return "";
+  if ((conversation as typeof conversation & { aiPaused?: boolean }).aiPaused) return "";
 
   const userText = message.text?.body ?? "";
   const convId = conversation.id;

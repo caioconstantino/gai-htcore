@@ -1,6 +1,6 @@
 import { Router, type Router as ExpressRouter } from "express";
 import { prisma } from "../lib/prisma.js";
-import { sendWhatsAppMessage } from "../whatsapp/sender.js";
+import { dispatchMessage, type WhatsAppCompany } from "../whatsapp/dispatcher.js";
 import { type AuthRequest } from "../middleware/auth.js";
 
 export const conversationsRouter: ExpressRouter = Router();
@@ -105,14 +105,13 @@ conversationsRouter.post("/:id/send", async (req: AuthRequest, res, next) => {
       },
     });
 
-    // Envia via WhatsApp se a empresa tiver API key
-    if (conversation.company.whatsappToken) {
-      await sendWhatsAppMessage({
-        apiKey: conversation.company.whatsappToken,
-        to: conversation.lead.phone,
-        text: message.trim(),
-      });
+    // Send via whichever provider is configured
+    try {
+      await dispatchMessage(conversation.company as WhatsAppCompany, conversation.lead.phone, message.trim());
       await prisma.message.update({ where: { id: saved.id }, data: { status: "delivered" } });
+    } catch (sendErr) {
+      // Log but don't fail — message is saved in DB regardless
+      console.error("Manual send WhatsApp error", sendErr);
     }
 
     res.json(saved);
@@ -132,6 +131,33 @@ conversationsRouter.get("/:id/orch-logs", async (req: AuthRequest, res, next) =>
       take: 200,
     });
     res.json(logs);
+  } catch (err) { next(err); }
+});
+
+conversationsRouter.post("/:id/pause", async (req: AuthRequest, res, next) => {
+  try {
+    const conversation = await prisma.conversation.findUnique({ where: { id: req.params.id }, select: { companyId: true } });
+    if (!conversation) { res.status(404).json({ error: "Conversa não encontrada" }); return; }
+    if (req.user?.role !== "super_admin" && conversation.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    // aiPaused added via migration; use raw SQL until Prisma client is regenerated on build
+    await prisma.$executeRaw`UPDATE conversations SET "aiPaused" = true WHERE id = ${req.params.id}`;
+    const updated = await prisma.conversation.findUnique({ where: { id: req.params.id } });
+    res.json(updated);
+  } catch (err) { next(err); }
+});
+
+conversationsRouter.post("/:id/resume", async (req: AuthRequest, res, next) => {
+  try {
+    const conversation = await prisma.conversation.findUnique({ where: { id: req.params.id }, select: { companyId: true } });
+    if (!conversation) { res.status(404).json({ error: "Conversa não encontrada" }); return; }
+    if (req.user?.role !== "super_admin" && conversation.companyId !== req.user?.companyId) {
+      res.status(403).json({ error: "Acesso negado" }); return;
+    }
+    await prisma.$executeRaw`UPDATE conversations SET "aiPaused" = false WHERE id = ${req.params.id}`;
+    const updated = await prisma.conversation.findUnique({ where: { id: req.params.id } });
+    res.json(updated);
   } catch (err) { next(err); }
 });
 

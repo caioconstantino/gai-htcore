@@ -5,13 +5,14 @@ import { api } from "@/lib/api";
 import {
   Box, Card, Text, Title, Stack, Group, Badge, Avatar, Skeleton,
   Select, Drawer, Divider, ScrollArea, Paper, TextInput, ActionIcon,
-  Tooltip, Tabs, Timeline, ThemeIcon,
+  Tooltip, Tabs, Timeline, ThemeIcon, Button,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import {
   IconMessageCircle, IconRobot, IconUser, IconFilter,
   IconSend, IconRefresh, IconMessages, IconBinaryTree2,
   IconRoute, IconBrain, IconCheck, IconAlertTriangle,
+  IconPlayerPause, IconPlayerPlay,
 } from "@tabler/icons-react";
 
 interface Message {
@@ -27,6 +28,7 @@ interface Conversation {
   id: string;
   isActive: boolean;
   handedOffToHuman: boolean;
+  aiPaused: boolean;
   totalTokensUsed: number;
   updatedAt: string;
   companyId: string;
@@ -51,6 +53,7 @@ const statusOptions = [
   { value: "active", label: "Ativas" },
   { value: "closed", label: "Encerradas" },
   { value: "handoff", label: "Aguardando humano" },
+  { value: "paused", label: "IA pausada" },
 ];
 
 const stepConfig: Record<string, { color: string; icon: React.ReactNode }> = {
@@ -147,6 +150,7 @@ export default function ConversationsPage() {
   const { data, isLoading } = useQuery<{ data: Conversation[] }>({
     queryKey: ["conversations"],
     queryFn: () => api.get("/conversations").then((r) => r.data),
+    refetchInterval: 15_000,
   });
 
   const { data: detail, isFetching: detailFetching } = useQuery<ConvDetail>({
@@ -183,12 +187,31 @@ export default function ConversationsPage() {
     },
   });
 
+  const pauseAI = useMutation({
+    mutationFn: () => api.post(`/conversations/${selected}/pause`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["conversation", selected] });
+      qc.invalidateQueries({ queryKey: ["conversations"] });
+    },
+  });
+
+  const resumeAI = useMutation({
+    mutationFn: () => api.post(`/conversations/${selected}/resume`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["conversation", selected] });
+      qc.invalidateQueries({ queryKey: ["conversations"] });
+    },
+  });
+
   const conversations = (data?.data ?? []).filter((c) => {
-    if (statusFilter === "active") return c.isActive;
-    if (statusFilter === "closed") return !c.isActive;
+    if (statusFilter === "active")  return c.isActive;
+    if (statusFilter === "closed")  return !c.isActive;
     if (statusFilter === "handoff") return c.handedOffToHuman;
+    if (statusFilter === "paused")  return c.aiPaused;
     return true;
   });
+
+  const canSendManual = detail?.isActive && (detail.aiPaused || detail.handedOffToHuman);
 
   return (
     <Stack gap="lg" maw={1200}>
@@ -222,15 +245,44 @@ export default function ConversationsPage() {
       >
         {detail && (
           <>
-            <Group gap="xs" mb="xs">
-              {detail.handedOffToHuman && <Badge color="orange" variant="light">Aguardando humano</Badge>}
-              <Badge color={detail.isActive ? "green" : "gray"} variant="light">
-                {detail.isActive ? "Ativa" : "Encerrada"}
-              </Badge>
-              {detail.currentAgent && (
-                <Badge color="violet" variant="outline" size="sm">{detail.currentAgent.name}</Badge>
+            <Group gap="xs" mb="xs" justify="space-between" wrap="nowrap">
+              <Group gap="xs" wrap="nowrap">
+                {detail.aiPaused && <Badge color="yellow" variant="filled">IA pausada</Badge>}
+                {detail.handedOffToHuman && <Badge color="orange" variant="light">Aguardando humano</Badge>}
+                <Badge color={detail.isActive ? "green" : "gray"} variant="light">
+                  {detail.isActive ? "Ativa" : "Encerrada"}
+                </Badge>
+                {detail.currentAgent && (
+                  <Badge color="violet" variant="outline" size="sm">{detail.currentAgent.name}</Badge>
+                )}
+                <Text size="xs" c="dimmed">{detail.totalTokensUsed} tokens</Text>
+              </Group>
+
+              {detail.isActive && (
+                detail.aiPaused ? (
+                  <Button
+                    size="xs"
+                    variant="filled"
+                    color="green"
+                    leftSection={<IconPlayerPlay size={14} />}
+                    loading={resumeAI.isPending}
+                    onClick={() => resumeAI.mutate()}
+                  >
+                    Retomar IA
+                  </Button>
+                ) : (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="orange"
+                    leftSection={<IconPlayerPause size={14} />}
+                    loading={pauseAI.isPending}
+                    onClick={() => pauseAI.mutate()}
+                  >
+                    Pausar IA
+                  </Button>
+                )
               )}
-              <Text size="xs" c="dimmed">{detail.totalTokensUsed} tokens</Text>
             </Group>
             <Divider mb="sm" />
 
@@ -257,13 +309,17 @@ export default function ConversationsPage() {
                   </Stack>
                 </ScrollArea>
 
-                {detail.handedOffToHuman && detail.isActive && (
+                {canSendManual && (
                   <>
-                    <Divider my="xs" />
+                    <Divider my="xs" label={
+                      <Text size="xs" c="dimmed">
+                        {detail.aiPaused ? "IA pausada — você está no controle" : "Atendimento humano"}
+                      </Text>
+                    } />
                     <Group gap="xs" wrap="nowrap">
                       <TextInput
                         style={{ flex: 1 }}
-                        placeholder="Responder como atendente humano..."
+                        placeholder={detail.aiPaused ? "Digite sua mensagem..." : "Responder como atendente humano..."}
                         value={manualText}
                         onChange={(e) => setManualText(e.currentTarget.value)}
                         onKeyDown={(e) => {
@@ -345,8 +401,11 @@ export default function ConversationsPage() {
               onMouseEnter={(e) => { if (selected !== conv.id) e.currentTarget.style.background = "var(--mantine-color-gray-0)"; }}
               onMouseLeave={(e) => { if (selected !== conv.id) e.currentTarget.style.background = "transparent"; }}
             >
-              <Avatar radius="xl" size={isMobile ? 34 : 40} color={conv.handedOffToHuman ? "orange" : "violet"}>
-                {conv.handedOffToHuman ? <IconUser size={16} /> : <IconRobot size={16} />}
+              <Avatar
+                radius="xl" size={isMobile ? 34 : 40}
+                color={conv.aiPaused ? "yellow" : conv.handedOffToHuman ? "orange" : "violet"}
+              >
+                {conv.aiPaused ? <IconPlayerPause size={16} /> : conv.handedOffToHuman ? <IconUser size={16} /> : <IconRobot size={16} />}
               </Avatar>
               <Box style={{ flex: 1, minWidth: 0 }}>
                 <Text size="sm" fw={500} truncate>{conv.lead.name ?? conv.lead.phone}</Text>
@@ -357,7 +416,10 @@ export default function ConversationsPage() {
                 </Group>
               </Box>
               <Group gap="xs">
-                {conv.handedOffToHuman && (
+                {conv.aiPaused && (
+                  <Badge color="yellow" variant="light" size="xs">{isMobile ? "⏸" : "IA pausada"}</Badge>
+                )}
+                {conv.handedOffToHuman && !conv.aiPaused && (
                   <Badge color="orange" variant="light" size="xs">{isMobile ? "👤" : "Humano"}</Badge>
                 )}
                 <Badge color={conv.isActive ? "green" : "gray"} variant="light" size="xs">
