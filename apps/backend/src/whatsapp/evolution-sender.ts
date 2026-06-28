@@ -57,20 +57,24 @@ export async function evolutionSendTyping(input: {
 
 /** Send a text message via Evolution API (split into sentences like 360dialog sender). */
 export async function evolutionSendMessage(input: {
-  baseUrl:      string;
-  apiKey:       string;
-  instance:     string;
-  to:           string;
-  text:         string;
+  baseUrl:         string;
+  apiKey:          string;
+  instance:        string;
+  to:              string;
+  text:            string;
   delayBetweenMs?: number;
 }): Promise<void> {
-  const { baseUrl, apiKey, instance, to, text, delayBetweenMs = 1200 } = input;
+  const { baseUrl, apiKey, instance, to, text, delayBetweenMs = 5000 } = input;
   const number = normalizeNumber(to);
   const chunks = splitMessage(text);
   if (chunks.length === 0) return;
 
   for (let i = 0; i < chunks.length; i++) {
-    if (i > 0) await new Promise((r) => setTimeout(r, delayBetweenMs));
+    if (i > 0) {
+      // Show "digitando..." and wait before each subsequent chunk
+      evolutionSendTyping({ baseUrl, apiKey, instance, to, durationMs: delayBetweenMs + 2000 }).catch(() => {});
+      await new Promise((r) => setTimeout(r, delayBetweenMs));
+    }
     await post(baseUrl, apiKey, `/message/sendText/${instance}`, {
       number,
       text: chunks[i],
