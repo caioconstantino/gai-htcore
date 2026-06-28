@@ -16,6 +16,10 @@ model Company {
   slug                  String        @unique
   whatsappPhoneNumberId String?
   whatsappToken         String?
+  whatsappProvider      String        @default("360dialog")
+  evolutionApiUrl       String?
+  evolutionApiKey       String?
+  evolutionInstance     String?
   aiProvider            String        @default("openai")
   aiModel               String        @default("gpt-4o-mini")
   tokenLimit            Int           @default(1000000)

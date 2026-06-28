@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { prisma } from "../lib/prisma.js";
-import { sendWhatsAppMessage } from "../whatsapp/sender.js";
+import { dispatchMessage } from "../whatsapp/dispatcher.js";
 import { logger } from "../lib/logger.js";
 
 interface FollowUpJobData {
@@ -34,11 +34,7 @@ export async function followUpWorker(job: Job<FollowUpJobData>): Promise<void> {
     return;
   }
 
-  await sendWhatsAppMessage({
-    apiKey: company.whatsappToken ?? "",
-    to: lead.phone,
-    text: message,
-  });
+  await dispatchMessage(company, lead.phone, message);
 
   await prisma.message.create({
     data: {

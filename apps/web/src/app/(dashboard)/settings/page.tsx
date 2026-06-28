@@ -12,7 +12,7 @@ import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import {
   IconBrandWhatsapp, IconRobot, IconBuilding, IconDeviceFloppy,
-  IconCopy, IconCheck, IconRefresh, IconId, IconSparkles,
+  IconCopy, IconCheck, IconRefresh, IconId, IconSparkles, IconPlugConnected,
 } from "@tabler/icons-react";
 
 const TOM_PRESETS = [
@@ -47,6 +47,9 @@ interface Company {
   id: string; name: string; slug: string; plan: string; isActive: boolean;
   whatsappPhoneNumberId: string | null; aiProvider: string; aiModel: string;
   tokenLimit: number; tokensUsed: number; userLimit: number;
+  whatsappProvider: string | null;
+  evolutionApiUrl: string | null;
+  evolutionInstance: string | null;
   metadata: CompanyMetadata;
 }
 
@@ -88,6 +91,15 @@ export default function SettingsPage() {
     initialValues: { whatsappToken: "" },
   });
 
+  const evolutionForm = useForm({
+    initialValues: {
+      whatsappProvider: "360dialog" as "360dialog" | "evolution",
+      evolutionApiUrl:  "",
+      evolutionApiKey:  "",
+      evolutionInstance: "",
+    },
+  });
+
   const aiForm = useForm({
     initialValues: { aiProvider: "openai", aiModel: "gpt-4o-mini" },
   });
@@ -119,6 +131,12 @@ export default function SettingsPage() {
         mensagemBoasVindas:    m.mensagemBoasVindas ?? "",
         assinaturaIA:          m.assinaturaIA ?? "",
         prioridadeAtendimento: m.prioridadeAtendimento ?? "",
+      });
+      evolutionForm.setValues({
+        whatsappProvider:  (company.whatsappProvider ?? "360dialog") as "360dialog" | "evolution",
+        evolutionApiUrl:   company.evolutionApiUrl ?? "",
+        evolutionApiKey:   "",
+        evolutionInstance: company.evolutionInstance ?? "",
       });
       if (typeof window !== "undefined") {
         const backendBase = window.location.origin.replace(/:\d+$/, ":3001");
@@ -371,6 +389,89 @@ export default function SettingsPage() {
             <Group justify="flex-end">
               <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending}>
                 Salvar API Key
+              </Button>
+            </Group>
+          </Stack>
+        </form>
+      </Card>
+
+      {/* Evolution API config */}
+      <Card padding="lg" radius="lg" withBorder shadow="sm">
+        <Group mb="md">
+          <ThemeIcon size={40} radius="md" color="teal" variant="light"><IconPlugConnected size={20} /></ThemeIcon>
+          <Box>
+            <Text fw={600} size="sm">WhatsApp via Evolution API</Text>
+            <Text size="xs" c="dimmed">Integração alternativa com Evolution API (self-hosted)</Text>
+          </Box>
+        </Group>
+
+        <form onSubmit={evolutionForm.onSubmit((v) => {
+          const data: Record<string, unknown> = {
+            whatsappProvider:  v.whatsappProvider,
+            evolutionApiUrl:   v.evolutionApiUrl.trim() || null,
+            evolutionInstance: v.evolutionInstance.trim() || null,
+          };
+          if (v.evolutionApiKey.trim()) data.evolutionApiKey = v.evolutionApiKey.trim();
+          mutation.mutate(data);
+        })}>
+          <Stack gap="md">
+            <Select
+              label="Provedor ativo de WhatsApp"
+              description="Define qual integração será usada para envio e recebimento de mensagens"
+              data={[
+                { value: "360dialog", label: "360dialog (oficial Meta)" },
+                { value: "evolution", label: "Evolution API (self-hosted)" },
+              ]}
+              {...evolutionForm.getInputProps("whatsappProvider")}
+            />
+
+            {evolutionForm.values.whatsappProvider === "evolution" && (
+              <>
+                <TextInput
+                  label="URL da Evolution API"
+                  description="Ex: https://evolution.suaempresa.com.br"
+                  placeholder="https://evolution.suaempresa.com.br"
+                  {...evolutionForm.getInputProps("evolutionApiUrl")}
+                />
+                <PasswordInput
+                  label="API Key da Evolution"
+                  description="Chave configurada no servidor Evolution (AUTHENTICATION_API_KEY)"
+                  placeholder="••••••••••••••••"
+                  {...evolutionForm.getInputProps("evolutionApiKey")}
+                />
+                <TextInput
+                  label="Nome da instância"
+                  description="Nome da instância criada no Evolution API (case-sensitive)"
+                  placeholder="minha-empresa"
+                  {...evolutionForm.getInputProps("evolutionInstance")}
+                />
+
+                <Box p="sm" style={{ background: "var(--mantine-color-teal-0)", borderRadius: 8, border: "1px solid var(--mantine-color-teal-2)" }}>
+                  <Text size="xs" c="teal.8" fw={600} mb={4}>URL do Webhook para configurar na Evolution API:</Text>
+                  <Group gap="xs" align="center">
+                    <Code style={{ flex: 1, wordBreak: "break-all", fontSize: 11 }}>
+                      {webhookUrl.replace("/webhook/", "/webhook/evolution/") || `https://seu-backend.com/webhook/evolution/${company?.slug ?? "sua-empresa"}`}
+                    </Code>
+                    <CopyButton value={webhookUrl.replace("/webhook/", "/webhook/evolution/")} timeout={2000}>
+                      {({ copied, copy }) => (
+                        <Tooltip label={copied ? "Copiado!" : "Copiar"} withArrow>
+                          <ActionIcon color={copied ? "teal" : "gray"} variant="subtle" size="sm" onClick={copy}>
+                            {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+                    </CopyButton>
+                  </Group>
+                  <Text size="xs" c="dimmed" mt={6}>
+                    Configure este URL no Evolution Manager → sua instância → Webhook → URL, com evento <Code fz={10}>MESSAGES_UPSERT</Code>.
+                  </Text>
+                </Box>
+              </>
+            )}
+
+            <Group justify="flex-end">
+              <Button type="submit" leftSection={<IconDeviceFloppy size={16} />} loading={mutation.isPending} color="teal">
+                Salvar Configuração
               </Button>
             </Group>
           </Stack>

@@ -8,7 +8,7 @@ import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { buildAgentContext } from "./context.js";
 import { generateQuotePDF, type QuoteItem } from "../services/quote-pdf.js";
-import { sendWhatsAppDocument } from "../whatsapp/sender.js";
+import { dispatchDocument, type WhatsAppCompany } from "../whatsapp/dispatcher.js";
 import type { SpecialistResult } from "./specialist-runner.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -207,22 +207,21 @@ export async function runQuoterAgent(input: {
     await onLog?.(specialist.name, `PDF gerado: ${filename} (${(pdfBuffer.length / 1024).toFixed(1)} KB)`);
 
     // 5. Send document via WhatsApp (if public URL is available)
-    const apiKey = (company as unknown as Record<string, string>).whatsappToken;
-    if (pdfUrl && apiKey) {
+    if (pdfUrl) {
       try {
-        await sendWhatsAppDocument({
-          apiKey,
-          to:          lead.phone,
-          documentUrl: pdfUrl,
-          filename:    `Orçamento-${quoteNumber}.pdf`,
-          caption:     `📋 Orçamento #${quoteNumber} — ${company.name}\n\nConfira o PDF com todos os detalhes!`,
-        });
+        await dispatchDocument(
+          company as WhatsAppCompany,
+          lead.phone,
+          pdfUrl,
+          `Orçamento-${quoteNumber}.pdf`,
+          `📋 Orçamento #${quoteNumber} — ${company.name}\n\nConfira o PDF com todos os detalhes!`,
+        );
         await onLog?.(specialist.name, `PDF enviado via WhatsApp para ${lead.phone}`);
       } catch (sendErr) {
         logger.error("Quoter: WhatsApp document send failed", { sendErr });
         await onLog?.(specialist.name, `Falha ao enviar PDF via WhatsApp: ${(sendErr as Error).message}`, { error: true });
       }
-    } else if (!pdfUrl) {
+    } else {
       logger.warn("Quoter: BACKEND_PUBLIC_URL not set — PDF generated locally but not sent via WhatsApp");
     }
 

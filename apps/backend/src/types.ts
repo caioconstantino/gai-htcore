@@ -1,5 +1,27 @@
 // Tipos locais do backend (espelhados do @gai/shared para evitar dependência de build)
 
+// ── Evolution API webhook payload ─────────────────────────────────────────────
+
+export interface EvolutionWebhookPayload {
+  event:    string;         // "messages.upsert", "messages.update", etc.
+  instance: string;         // instance name
+  data: {
+    key: {
+      remoteJid: string;    // "5511999999999@s.whatsapp.net"
+      fromMe:    boolean;
+      id:        string;    // message id
+    };
+    message?: {
+      conversation?:          string;
+      extendedTextMessage?:   { text: string };
+      messageType?:           string;
+    };
+    messageType:   string;  // "conversation", "extendedTextMessage", etc.
+    messageTimestamp: number;
+    pushName?:     string;  // contact display name
+  };
+}
+
 export interface WhatsAppWebhookPayload {
   object: string;
   entry: WhatsAppEntry[];

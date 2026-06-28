@@ -40,11 +40,15 @@ const updateSchema = z.object({
   tokenLimit: z.number().int().min(0).optional(),
   userLimit: z.number().int().min(1).optional(),
   whatsappPhoneNumberId: z.string().max(50).optional(),
-  whatsappToken: z.string().max(512).optional(),
-  aiProvider: z.string().max(50).optional(),
-  aiModel: z.string().max(100).optional(),
-  primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-  metadata: metadataSchema.optional(),
+  whatsappToken:         z.string().max(512).optional(),
+  whatsappProvider:      z.enum(["360dialog", "evolution"]).optional(),
+  evolutionApiUrl:       z.string().max(500).optional(),
+  evolutionApiKey:       z.string().max(512).optional(),
+  evolutionInstance:     z.string().max(200).optional(),
+  aiProvider:            z.string().max(50).optional(),
+  aiModel:               z.string().max(100).optional(),
+  primaryColor:          z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  metadata:              metadataSchema.optional(),
 });
 
 companiesRouter.get("/", requireRole("super_admin"), async (req, res, next) => {
@@ -128,8 +132,8 @@ companiesRouter.get("/:id", async (req: AuthRequest, res, next) => {
     });
     if (!company) { res.status(404).json({ error: "Empresa não encontrada" }); return; }
 
-    // Never expose the WhatsApp token in responses
-    const { whatsappToken: _t, ...safe } = company as typeof company & { whatsappToken?: string };
+    // Never expose credentials in responses
+    const { whatsappToken: _t, evolutionApiKey: _e, ...safe } = company as typeof company & { whatsappToken?: string; evolutionApiKey?: string };
     res.json(safe);
   } catch (err) {
     next(err);
