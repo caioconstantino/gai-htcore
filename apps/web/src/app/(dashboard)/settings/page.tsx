@@ -78,9 +78,14 @@ export default function SettingsPage() {
   });
 
   const [tomPreset, setTomPreset] = useState<string>("profissional");
-  const gaiForm = useForm({
+  const gaiForm = useForm<{
+    tomDeVoz: string;
+    mensagemBoasVindas: string;
+    assinaturaIA: string;
+    prioridadeAtendimento: string;
+  }>({
     initialValues: {
-      tomDeVoz:              TOM_PRESETS[0].text,
+      tomDeVoz:              TOM_PRESETS[0].text as string,
       mensagemBoasVindas:    "",
       assinaturaIA:          "",
       prioridadeAtendimento: "",
