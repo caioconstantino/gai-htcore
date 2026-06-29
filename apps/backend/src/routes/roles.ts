@@ -3,6 +3,12 @@ import { prisma } from "../lib/prisma.js";
 import { requireRole, type AuthRequest } from "../middleware/auth.js";
 import { z } from "zod";
 
+// Converts JS string array to PostgreSQL array literal: ["a","b"] → {"a","b"}
+function pgTextArray(arr: string[]): string {
+  if (arr.length === 0) return "{}";
+  return "{" + arr.map((s) => `"${s.replace(/"/g, '\\"')}"`).join(",") + "}";
+}
+
 export const rolesRouter: ExpressRouter = Router();
 
 const roleSchema = z.object({
@@ -41,9 +47,10 @@ rolesRouter.post("/", requireRole("super_admin", "company_admin"), async (req: A
 
     const { name, description, permissions, isDefault } = parsed.data;
 
+    const permArray = pgTextArray(permissions);
     const [role] = await prisma.$queryRaw<Record<string, unknown>[]>`
       INSERT INTO company_roles ("companyId", name, description, permissions, "isDefault", "createdAt", "updatedAt")
-      VALUES (${companyId}, ${name}, ${description ?? null}, ${permissions}::text[], ${isDefault ?? false}, NOW(), NOW())
+      VALUES (${companyId}, ${name}, ${description ?? null}, ${permArray}::text[], ${isDefault ?? false}, NOW(), NOW())
       RETURNING *
     `;
     res.status(201).json(role);
@@ -65,11 +72,12 @@ rolesRouter.patch("/:id", requireRole("super_admin", "company_admin"), async (re
 
     const { name, description, permissions, isDefault } = parsed.data;
 
+    const permArray = pgTextArray(permissions);
     const [updated] = await prisma.$queryRaw<Record<string, unknown>[]>`
       UPDATE company_roles
       SET name = ${name},
           description = ${description ?? null},
-          permissions = ${permissions}::text[],
+          permissions = ${permArray}::text[],
           "isDefault" = ${isDefault ?? false},
           "updatedAt" = NOW()
       WHERE id = ${id}
