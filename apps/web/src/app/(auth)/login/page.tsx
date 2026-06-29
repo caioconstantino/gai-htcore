@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
+import { getFirstAccessibleRoute } from "@/lib/permissions";
 import Image from "next/image";
 import {
   Box, Button, Center, Paper, PasswordInput, Stack,
@@ -26,7 +27,12 @@ export default function LoginPage() {
     try {
       const { data } = await api.post("/auth/login", { email, password });
       setAuth(data.token, data.user);
-      router.push("/dashboard");
+      const permissions: string[] = data.user?.permissions ?? [];
+      const role: string = data.user?.role ?? "";
+      const redirect = (role === "super_admin" || role === "company_admin")
+        ? "/dashboard"
+        : getFirstAccessibleRoute(permissions);
+      router.push(redirect);
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { error?: string } } };
       setError(axiosErr.response?.data?.error ?? "Email ou senha inválidos");

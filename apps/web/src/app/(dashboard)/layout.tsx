@@ -1,27 +1,37 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Box, Burger, Drawer, Group, Text, ThemeIcon, Loader, Center } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { IconBolt } from "@tabler/icons-react";
+import { ROUTE_PERMISSIONS, getFirstAccessibleRoute } from "@/lib/permissions";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { token, _hasHydrated } = useAuthStore();
+  const pathname = usePathname();
+  const { token, user, _hasHydrated, hasPermission } = useAuthStore();
   const [drawerOpened, { open, close }] = useDisclosure(false);
   const isMobile = useMediaQuery("(max-width: 768px)") ?? false;
 
   useEffect(() => {
-    // Only redirect after the store has rehydrated from localStorage.
-    // Without this guard, the first render sees token=null and redirects
-    // to /login even when the user is actually logged in.
-    if (_hasHydrated && !token) {
-      router.push("/login");
+    if (!_hasHydrated) return;
+    if (!token) { router.push("/login"); return; }
+
+    // Skip permission check for admins (they see everything)
+    if (user?.role === "super_admin" || user?.role === "company_admin") return;
+
+    // Check if the current route requires a permission the user doesn't have
+    const requiredPermission = Object.entries(ROUTE_PERMISSIONS).find(
+      ([route]) => pathname === route || pathname.startsWith(route + "/")
+    )?.[1];
+
+    if (requiredPermission && !hasPermission(requiredPermission)) {
+      router.replace(getFirstAccessibleRoute(user?.permissions ?? []));
     }
-  }, [_hasHydrated, token, router]);
+  }, [_hasHydrated, token, pathname, user, hasPermission, router]);
 
   // Show a loading screen while rehydrating to avoid flash of /login
   if (!_hasHydrated) {

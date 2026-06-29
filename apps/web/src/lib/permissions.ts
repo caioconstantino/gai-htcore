@@ -1,3 +1,34 @@
+// Ordered list used to find the first route a user can access
+export const PERMISSION_ROUTES = [
+  { permission: "dashboard.view",     href: "/dashboard" },
+  { permission: "conversations.view", href: "/conversations" },
+  { permission: "leads.view",         href: "/leads" },
+  { permission: "agents.view",        href: "/agents" },
+  { permission: "products.view",      href: "/products" },
+  { permission: "quotes.view",        href: "/quotes" },
+  { permission: "settings.view",      href: "/settings" },
+] as const;
+
+export const ROUTE_PERMISSIONS: Record<string, string> = {
+  "/dashboard":     "dashboard.view",
+  "/leads":         "leads.view",
+  "/conversations": "conversations.view",
+  "/agents":        "agents.view",
+  "/products":      "products.view",
+  "/quotes":        "quotes.view",
+  "/settings":      "settings.view",
+  "/users":         "users.view",
+  "/roles":         "roles.manage",
+};
+
+export function getFirstAccessibleRoute(permissions: string[]): string {
+  if (permissions.includes("*")) return "/dashboard";
+  for (const { permission, href } of PERMISSION_ROUTES) {
+    if (permissions.includes(permission)) return href;
+  }
+  return "/settings"; // last-resort fallback
+}
+
 export const PERMISSION_GROUPS = [
   {
     group: "Dashboard",
