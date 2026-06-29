@@ -12,42 +12,49 @@ import {
   IconMessageCircle, IconPackage, IconFileText, IconLogout, IconShieldCheck,
 } from "@tabler/icons-react";
 
-const companyNav = [
-  { href: "/dashboard",     label: "Dashboard",      icon: IconLayoutDashboard },
-  { href: "/leads",         label: "Leads",          icon: IconUsers },
-  { href: "/conversations", label: "Conversas",      icon: IconMessageCircle },
-  { href: "/agents",        label: "Agentes",        icon: IconRobot },
-  { href: "/products",      label: "Produtos",       icon: IconPackage },
-  { href: "/quotes",        label: "Orçamentos",     icon: IconFileText },
-  { href: "/settings",      label: "Configurações",  icon: IconSettings },
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ElementType;
+  permission?: string; // if set, hidden when user lacks this permission
+}
+
+const companyNav: NavItem[] = [
+  { href: "/dashboard",     label: "Dashboard",      icon: IconLayoutDashboard, permission: "dashboard.view" },
+  { href: "/leads",         label: "Leads",          icon: IconUsers,           permission: "leads.view" },
+  { href: "/conversations", label: "Conversas",      icon: IconMessageCircle,   permission: "conversations.view" },
+  { href: "/agents",        label: "Agentes",        icon: IconRobot,           permission: "agents.view" },
+  { href: "/products",      label: "Produtos",       icon: IconPackage,         permission: "products.view" },
+  { href: "/quotes",        label: "Orçamentos",     icon: IconFileText,        permission: "quotes.view" },
+  { href: "/settings",      label: "Configurações",  icon: IconSettings,        permission: "settings.view" },
 ];
 
-const adminNav = [
+const adminNav: NavItem[] = [
   ...companyNav,
-  { href: "/users", label: "Usuários", icon: IconUsers },
-  { href: "/roles", label: "Perfis de Acesso", icon: IconShieldCheck },
+  { href: "/users", label: "Usuários",          icon: IconUsers,        permission: "users.view" },
+  { href: "/roles", label: "Perfis de Acesso",  icon: IconShieldCheck,  permission: "roles.manage" },
 ];
 
-const masterNav = [
-  { href: "/dashboard", label: "Dashboard Executivo", icon: IconLayoutDashboard },
-  { href: "/companies", label: "Empresas", icon: IconBuilding },
-  { href: "/users", label: "Usuários", icon: IconUsers },
-  { href: "/subscriptions", label: "Assinaturas", icon: IconCreditCard },
-  { href: "/financial", label: "Financeiro", icon: IconCurrencyDollar },
-  { href: "/ai-usage", label: "Consumo IA", icon: IconBolt },
-  { href: "/global-agents", label: "Agentes Globais", icon: IconRobot },
-  { href: "/global-products", label: "Produtos Globais", icon: IconPackage },
-  { href: "/knowledge-base", label: "Biblioteca de Inteligência", icon: IconBook2 },
-  { href: "/support", label: "Suporte", icon: IconHeadset },
-  { href: "/audit-logs", label: "Logs e Auditoria", icon: IconFileSearch },
-  { href: "/integrations", label: "Integrações", icon: IconPlugConnected },
-  { href: "/settings", label: "Configurações Gerais", icon: IconSettings },
-  { href: "/reports", label: "Relatórios Globais", icon: IconChartBar },
-  { href: "/security", label: "Segurança", icon: IconShield },
-  { href: "/backups", label: "Backups", icon: IconCloudUpload },
+const masterNav: NavItem[] = [
+  { href: "/dashboard",       label: "Dashboard Executivo",      icon: IconLayoutDashboard },
+  { href: "/companies",       label: "Empresas",                 icon: IconBuilding },
+  { href: "/users",           label: "Usuários",                 icon: IconUsers },
+  { href: "/subscriptions",   label: "Assinaturas",              icon: IconCreditCard },
+  { href: "/financial",       label: "Financeiro",               icon: IconCurrencyDollar },
+  { href: "/ai-usage",        label: "Consumo IA",               icon: IconBolt },
+  { href: "/global-agents",   label: "Agentes Globais",          icon: IconRobot },
+  { href: "/global-products", label: "Produtos Globais",         icon: IconPackage },
+  { href: "/knowledge-base",  label: "Biblioteca de Inteligência", icon: IconBook2 },
+  { href: "/support",         label: "Suporte",                  icon: IconHeadset },
+  { href: "/audit-logs",      label: "Logs e Auditoria",         icon: IconFileSearch },
+  { href: "/integrations",    label: "Integrações",              icon: IconPlugConnected },
+  { href: "/settings",        label: "Configurações Gerais",     icon: IconSettings },
+  { href: "/reports",         label: "Relatórios Globais",       icon: IconChartBar },
+  { href: "/security",        label: "Segurança",                icon: IconShield },
+  { href: "/backups",         label: "Backups",                  icon: IconCloudUpload },
 ];
 
-function NavItem({ href, label, icon: Icon, active, onClick }: {
+function NavLink({ href, label, icon: Icon, active, onClick }: {
   href: string; label: string; icon: React.ElementType; active: boolean; onClick?: () => void;
 }) {
   return (
@@ -85,10 +92,19 @@ interface SidebarProps {
 export function Sidebar({ onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, logout } = useAuthStore();
-  const isSuperAdmin  = user?.role === "super_admin";
+  const { user, logout, hasPermission } = useAuthStore();
+
+  const isSuperAdmin   = user?.role === "super_admin";
   const isCompanyAdmin = user?.role === "company_admin";
-  const nav = isSuperAdmin ? masterNav : isCompanyAdmin ? adminNav : companyNav;
+
+  // Pick the base nav list for this role
+  const baseNav = isSuperAdmin ? masterNav : isCompanyAdmin ? adminNav : companyNav;
+
+  // Filter: hide items that require a permission the user doesn't have
+  // Super admin and company_admin always see everything in their nav
+  const nav = (isSuperAdmin || isCompanyAdmin)
+    ? baseNav
+    : baseNav.filter((item) => !item.permission || hasPermission(item.permission));
 
   function handleLogout() { logout(); router.push("/login"); }
 
@@ -114,7 +130,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         )}
         <Stack gap={2}>
           {nav.map((item) => (
-            <NavItem
+            <NavLink
               key={item.href}
               {...item}
               active={pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"))}
@@ -135,7 +151,9 @@ export function Sidebar({ onNavigate }: SidebarProps) {
               <Text size="xs" c="white" fw={500} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {user?.name}
               </Text>
-              <Text size="xs" c="dimmed">{isSuperAdmin ? "Super Admin" : user?.role?.replace("_", " ")}</Text>
+              <Text size="xs" c="dimmed">
+                {isSuperAdmin ? "Super Admin" : isCompanyAdmin ? "Admin da Empresa" : (user?.role?.replace("_", " ") ?? "")}
+              </Text>
             </Box>
           </Group>
         </Box>
