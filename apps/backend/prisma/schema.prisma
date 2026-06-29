@@ -45,6 +45,7 @@ model Company {
   companyProducts    CompanyProduct[]
   productSuggestions ProductSuggestion[]
   orchestrationLogs  OrchestrationLog[]
+  companyRoles       CompanyRole[]
 
   @@map("companies")
 }
@@ -54,6 +55,7 @@ model Company {
 model User {
   id           String    @id @default(cuid())
   companyId    String?
+  customRoleId String?
   name         String
   email        String    @unique
   passwordHash String
@@ -64,11 +66,31 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  company       Company?  @relation(fields: [companyId], references: [id])
-  assignedLeads Lead[]    @relation("AssignedLeads")
-  messages      Message[] @relation("SentMessages")
+  company       Company?     @relation(fields: [companyId], references: [id])
+  customRole    CompanyRole? @relation(fields: [customRoleId], references: [id])
+  assignedLeads Lead[]       @relation("AssignedLeads")
+  messages      Message[]    @relation("SentMessages")
 
   @@map("users")
+}
+
+// ─── PERFIS DE ACESSO ────────────────────────────────────────────────────────
+
+model CompanyRole {
+  id          String   @id @default(cuid())
+  companyId   String
+  name        String
+  description String?
+  permissions String[] @default([])
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  users   User[]
+
+  @@unique([companyId, name])
+  @@map("company_roles")
 }
 
 // ─── AGENTES ─────────────────────────────────────────────────────────────────

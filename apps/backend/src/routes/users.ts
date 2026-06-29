@@ -12,6 +12,7 @@ const createSchema = z.object({
   password: z.string().min(8).max(128),
   role: z.enum(["company_admin", "manager", "commercial", "operator"]),
   companyId: z.string().min(1).optional(),
+  customRoleId: z.string().optional(),
 });
 
 const createSuperAdminSchema = createSchema.extend({
@@ -24,6 +25,7 @@ const updateSchema = z.object({
   password: z.string().min(8).max(128).optional(),
   isActive: z.boolean().optional(),
   role: z.enum(["company_admin", "manager", "commercial", "operator"]).optional(),
+  customRoleId: z.string().nullable().optional(),
 });
 
 usersRouter.get("/", async (req: AuthRequest, res, next) => {
@@ -36,14 +38,18 @@ usersRouter.get("/", async (req: AuthRequest, res, next) => {
       ? {}
       : { companyId: req.user!.companyId };
 
+    const companyFilter = req.user?.role === "super_admin" ? null : req.user!.companyId;
     const [users, total] = await Promise.all([
-      prisma.user.findMany({
-        where,
-        select: { id: true, name: true, email: true, role: true, isActive: true, lastLoginAt: true, tokensUsed: true, companyId: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
-        skip,
-        take: limit,
-      }),
+      prisma.$queryRaw<Record<string, unknown>[]>`
+        SELECT u.id, u.name, u.email, u.role, u."isActive", u."lastLoginAt",
+               u."tokensUsed", u."companyId", u."createdAt", u."customRoleId",
+               cr.name AS "customRoleName"
+        FROM users u
+        LEFT JOIN company_roles cr ON cr.id = u."customRoleId"
+        WHERE (${companyFilter}::text IS NULL OR u."companyId" = ${companyFilter})
+        ORDER BY u."createdAt" DESC
+        LIMIT ${limit} OFFSET ${skip}
+      `,
       prisma.user.count({ where }),
     ]);
 
@@ -62,7 +68,7 @@ usersRouter.post("/", requireRole("super_admin", "company_admin"), async (req: A
       return;
     }
 
-    const { password, companyId, ...data } = parsed.data;
+    const { password, companyId, customRoleId, ...data } = parsed.data;
     const passwordHash = await bcrypt.hash(password, 12);
 
     // company_admin can only create users in their own company
@@ -70,10 +76,12 @@ usersRouter.post("/", requireRole("super_admin", "company_admin"), async (req: A
       ? companyId
       : req.user?.companyId;
 
-    const user = await prisma.user.create({
-      data: { ...data, passwordHash, companyId: resolvedCompanyId },
-      select: { id: true, name: true, email: true, role: true, companyId: true },
-    });
+    // Use raw SQL so customRoleId is set even before Prisma client is regenerated
+    const [user] = await prisma.$queryRaw<Record<string, unknown>[]>`
+      INSERT INTO users (id, "companyId", "customRoleId", name, email, "passwordHash", role, "isActive", "tokensUsed", "createdAt", "updatedAt")
+      VALUES (gen_random_uuid(), ${resolvedCompanyId ?? null}, ${customRoleId ?? null}, ${data.name}, ${data.email}, ${passwordHash}, ${data.role}, true, 0, NOW(), NOW())
+      RETURNING id, name, email, role, "companyId", "customRoleId", "isActive"
+    `;
     res.status(201).json(user);
   } catch (err) {
     next(err);
@@ -108,9 +116,14 @@ usersRouter.patch("/:id", async (req: AuthRequest, res, next) => {
       return;
     }
 
-    const { password, ...data } = parsed.data;
+    const { password, customRoleId, ...data } = parsed.data;
     const update: Record<string, unknown> = { ...data };
     if (password) update.passwordHash = await bcrypt.hash(password, 12);
+
+    // Handle customRoleId via raw SQL (field not yet in generated Prisma client)
+    if (customRoleId !== undefined) {
+      await prisma.$executeRaw`UPDATE users SET "customRoleId" = ${customRoleId} WHERE id = ${id}`;
+    }
 
     const user = await prisma.user.update({
       where: { id },

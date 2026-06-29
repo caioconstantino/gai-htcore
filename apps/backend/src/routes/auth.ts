@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import { authenticate, issueToken, type AuthRequest } from "../middleware/auth.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
+import { resolvePermissions } from "../lib/permissions.js";
 
 export const authRouter: ExpressRouter = Router();
 
@@ -33,7 +34,20 @@ authRouter.post("/login", loginLimiter, async (req, res, next) => {
     }
 
     const { email, password } = parsed.data;
-    const user = await prisma.user.findUnique({ where: { email } });
+    // Load user with custom role permissions
+    const rows = await prisma.$queryRaw<Array<{
+      id: string; name: string; email: string; passwordHash: string;
+      role: string; companyId: string | null; isActive: boolean;
+      customRolePermissions: string[] | null;
+    }>>`
+      SELECT u.id, u.name, u.email, u."passwordHash", u.role, u."companyId", u."isActive",
+             cr.permissions AS "customRolePermissions"
+      FROM users u
+      LEFT JOIN company_roles cr ON cr.id = u."customRoleId"
+      WHERE u.email = ${email}
+      LIMIT 1
+    `;
+    const user = rows[0] ?? null;
 
     // Constant-time response to prevent user enumeration
     if (!user || !user.isActive) {
@@ -63,6 +77,8 @@ authRouter.post("/login", loginLimiter, async (req, res, next) => {
 
     logger.info("User logged in", { userId: user.id, role: user.role, requestId: req.requestId });
 
+    const permissions = resolvePermissions(user.role, user.customRolePermissions);
+
     res.json({
       token,
       user: {
@@ -71,6 +87,7 @@ authRouter.post("/login", loginLimiter, async (req, res, next) => {
         email: user.email,
         role: user.role,
         companyId: user.companyId,
+        permissions,
       },
     });
   } catch (err) {
@@ -78,18 +95,26 @@ authRouter.post("/login", loginLimiter, async (req, res, next) => {
   }
 });
 
-// Returns current user from token — no DB hit needed
 authRouter.get("/me", authenticate, async (req: AuthRequest, res, next) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      select: { id: true, name: true, email: true, role: true, companyId: true, isActive: true, lastLoginAt: true },
-    });
+    const rows = await prisma.$queryRaw<Array<{
+      id: string; name: string; email: string; role: string; companyId: string | null;
+      isActive: boolean; lastLoginAt: Date | null; customRolePermissions: string[] | null;
+    }>>`
+      SELECT u.id, u.name, u.email, u.role, u."companyId", u."isActive", u."lastLoginAt",
+             cr.permissions AS "customRolePermissions"
+      FROM users u
+      LEFT JOIN company_roles cr ON cr.id = u."customRoleId"
+      WHERE u.id = ${req.user!.userId}
+      LIMIT 1
+    `;
+    const user = rows[0] ?? null;
     if (!user || !user.isActive) {
       res.status(401).json({ error: "Usuário não encontrado ou inativo" });
       return;
     }
-    res.json(user);
+    const permissions = resolvePermissions(user.role, user.customRolePermissions);
+    res.json({ ...user, customRolePermissions: undefined, permissions });
   } catch (err) {
     next(err);
   }

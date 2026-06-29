@@ -9,7 +9,7 @@ import {
   IconLayoutDashboard, IconBuilding, IconUsers, IconCreditCard, IconCurrencyDollar,
   IconBolt, IconRobot, IconBook2, IconHeadset, IconFileSearch,
   IconPlugConnected, IconSettings, IconChartBar, IconShield, IconCloudUpload,
-  IconMessageCircle, IconPackage, IconFileText, IconLogout,
+  IconMessageCircle, IconPackage, IconFileText, IconLogout, IconShieldCheck,
 } from "@tabler/icons-react";
 
 const companyNav = [
@@ -25,6 +25,7 @@ const companyNav = [
 const adminNav = [
   ...companyNav,
   { href: "/users", label: "Usuários", icon: IconUsers },
+  { href: "/roles", label: "Perfis de Acesso", icon: IconShieldCheck },
 ];
 
 const masterNav = [

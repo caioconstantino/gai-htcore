@@ -20,9 +20,12 @@ interface User {
   id: string; name: string; email: string; role: string;
   isActive: boolean; lastLoginAt: string | null;
   tokensUsed: number; companyId: string | null; createdAt: string;
+  customRoleId?: string | null; customRoleName?: string | null;
 }
 
 interface Company { id: string; name: string; slug: string; }
+
+interface CompanyRole { id: string; name: string; }
 
 const ROLES = [
   { value: "company_admin", label: "Admin da Empresa" },
@@ -51,10 +54,10 @@ function fmt(date: string | null) {
 }
 
 type FormValues = {
-  name: string; email: string; password: string; role: string; companyId: string;
+  name: string; email: string; password: string; role: string; companyId: string; customRoleId: string;
 };
 
-const EMPTY_FORM: FormValues = { name: "", email: "", password: "", role: "operator", companyId: "" };
+const EMPTY_FORM: FormValues = { name: "", email: "", password: "", role: "operator", companyId: "", customRoleId: "" };
 
 export default function UsersPage() {
   const qc = useQueryClient();
@@ -82,6 +85,12 @@ export default function UsersPage() {
     queryKey: ["companies"],
     queryFn: () => api.get("/companies").then((r) => r.data),
     enabled: isSuperAdmin,
+  });
+
+  const { data: rolesData } = useQuery<CompanyRole[]>({
+    queryKey: ["roles"],
+    queryFn: () => api.get("/roles").then((r) => r.data),
+    enabled: isCompanyAdmin || isSuperAdmin,
   });
 
   // ── Mutations ─────────────────────────────────────────────────────
@@ -131,10 +140,12 @@ export default function UsersPage() {
 
   const companies = companiesData?.data ?? [];
   const companyMap = new Map(companies.map((c) => [c.id, c.name]));
+  const companyRoles: CompanyRole[] = rolesData ?? [];
+  const roleOptions = companyRoles.map((r) => ({ value: r.id, label: r.name }));
 
   // ── Open edit ─────────────────────────────────────────────────────
   function openEdit(u: User) {
-    setForm({ name: u.name, email: u.email, password: "", role: u.role, companyId: u.companyId ?? "" });
+    setForm({ name: u.name, email: u.email, password: "", role: u.role, companyId: u.companyId ?? "", customRoleId: u.customRoleId ?? "" });
     setEditing(u);
   }
 
@@ -234,9 +245,14 @@ export default function UsersPage() {
                       </Table.Td>
                     )}
                     <Table.Td>
-                      <Badge color={ROLE_COLORS[u.role] ?? "gray"} variant="light" size="sm">
-                        {ROLE_LABELS[u.role] ?? u.role}
-                      </Badge>
+                      <Stack gap={2}>
+                        <Badge color={ROLE_COLORS[u.role] ?? "gray"} variant="light" size="sm">
+                          {ROLE_LABELS[u.role] ?? u.role}
+                        </Badge>
+                        {u.customRoleName && (
+                          <Badge color="violet" variant="dot" size="xs">{u.customRoleName}</Badge>
+                        )}
+                      </Stack>
                     </Table.Td>
                     <Table.Td ta="center">
                       <Tooltip label={u.isActive ? "Ativo — clique para desativar" : "Inativo — clique para ativar"} withArrow>
@@ -319,12 +335,24 @@ export default function UsersPage() {
             onChange={(e) => setF({ password: e.currentTarget.value })}
           />
           <Select
-            label="Perfil de acesso"
+            label="Função"
+            description="Define as permissões padrão do sistema"
             required
             value={form.role}
             onChange={(v) => setF({ role: v ?? "operator" })}
             data={isSuperAdmin ? ROLES_SUPER : ROLES}
           />
+          {roleOptions.length > 0 && (
+            <Select
+              label="Perfil de acesso personalizado"
+              description="Sobrescreve as permissões padrão da função"
+              placeholder="Nenhum (usa permissões da função)"
+              clearable
+              value={form.customRoleId || null}
+              onChange={(v) => setF({ customRoleId: v ?? "" })}
+              data={roleOptions}
+            />
+          )}
           {isSuperAdmin && (
             <Select
               label="Empresa"
@@ -342,7 +370,7 @@ export default function UsersPage() {
               loading={createMutation.isPending}
               disabled={!form.name || !form.email || !form.password}
               leftSection={<IconCheck size={15} />}
-              onClick={() => createMutation.mutate(form)}
+              onClick={() => createMutation.mutate({ ...form, customRoleId: form.customRoleId || undefined } as FormValues)}
             >
               Criar usuário
             </Button>
@@ -380,12 +408,23 @@ export default function UsersPage() {
             onChange={(e) => setF({ password: e.currentTarget.value })}
           />
           <Select
-            label="Perfil de acesso"
+            label="Função"
             value={form.role}
             onChange={(v) => setF({ role: v ?? "operator" })}
             data={isSuperAdmin ? ROLES_SUPER : ROLES}
             disabled={editing?.id === me?.id}
           />
+          {roleOptions.length > 0 && editing?.id !== me?.id && (
+            <Select
+              label="Perfil de acesso personalizado"
+              description="Sobrescreve as permissões padrão da função"
+              placeholder="Nenhum (usa permissões da função)"
+              clearable
+              value={form.customRoleId || null}
+              onChange={(v) => setF({ customRoleId: v ?? "" })}
+              data={roleOptions}
+            />
+          )}
           {editing?.id === me?.id && (
             <Alert icon={<IconShieldLock size={15} />} color="blue" radius="md" variant="light">
               Você não pode alterar o próprio perfil.
@@ -399,9 +438,10 @@ export default function UsersPage() {
               leftSection={<IconCheck size={15} />}
               onClick={() => {
                 if (!editing) return;
-                const body: Partial<FormValues> = { name: form.name, email: form.email, role: form.role };
+                const body: Record<string, unknown> = { name: form.name, email: form.email, role: form.role };
                 if (form.password) body.password = form.password;
-                updateMutation.mutate({ id: editing.id, body });
+                if (editing.id !== me?.id) body.customRoleId = form.customRoleId || null;
+                updateMutation.mutate({ id: editing.id, body: body as Partial<FormValues> });
               }}
             >
               Salvar alterações

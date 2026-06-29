@@ -30,6 +30,7 @@ import { conversationsRouter } from "./routes/conversations.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { usersRouter } from "./routes/users.js";
 import { quotesRouter } from "./routes/quotes.js";
+import { rolesRouter } from "./routes/roles.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -117,6 +118,7 @@ api.use("/conversations", conversationsRouter);
 api.use("/quotes", quotesRouter);
 api.use("/dashboard", dashboardRouter);
 api.use("/users", usersRouter);
+api.use("/roles", rolesRouter);
 
 app.use("/api/v1", api);
 
