@@ -14,5 +14,7 @@ export interface AIProvider {
     systemPrompt: string;
     history: ChatMessage[];
     userMessage: string;
+    temperature?: number;
+    maxTokens?: number;
   }): Promise<ChatResult>;
 }

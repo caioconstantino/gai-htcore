@@ -26,6 +26,16 @@ const agentSchema = z.object({
   aiProvider: z.string().max(50).nullable().optional(),
   aiModel: z.string().max(100).nullable().optional(),
   collectFields: collectFieldsSchema,
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().positive().nullable().optional(),
+  responseDelayMs: z.number().int().min(0).max(30000).optional(),
+  activeHoursStart: z.number().int().min(0).max(23).nullable().optional(),
+  activeHoursEnd: z.number().int().min(0).max(23).nullable().optional(),
+  offHoursMessage: z.string().max(1000).nullable().optional(),
+  initialMessage: z.string().max(1000).nullable().optional(),
+  handoffTriggers: z.array(z.string()).optional(),
+  fallbackMessage: z.string().max(1000).nullable().optional(),
+  priority: z.number().int().min(0).max(100).optional(),
 });
 
 /** Map well-known variable names to company fields for auto-fill. */
@@ -53,7 +63,7 @@ agentsRouter.get("/", async (req: AuthRequest, res, next) => {
         ...(isSuperAdmin ? { company: { select: { id: true, name: true, slug: true } } } : {}),
         phonePermissions: { select: { id: true, phone: true, label: true } },
       },
-      orderBy: [{ companyId: "asc" }, { type: "asc" }, { name: "asc" }],
+      orderBy: [{ companyId: "asc" }, { priority: "desc" }, { type: "asc" }, { name: "asc" }],
     });
     res.json({ data: agents, total: agents.length });
   } catch (err) { next(err); }

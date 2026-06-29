@@ -124,6 +124,21 @@ model Agent {
   // Para agentes de atendimento (tipo=attendance): campos a coletar do cliente
   // Ex: {"standard":["name","city","document"],"custom":[{"key":"tipo_frota","label":"Tipo de frota","description":"Carro, van..."}]}
   collectFields   Json?
+  // Advanced AI config
+  temperature      Decimal  @default(0.7)  @db.Decimal(3, 2)
+  maxTokens        Int?
+  responseDelayMs  Int      @default(0)
+  // Active hours: UTC hour 0-23; null = always active
+  activeHoursStart Int?
+  activeHoursEnd   Int?
+  offHoursMessage  String?
+  // Initial message sent automatically on first contact
+  initialMessage   String?
+  // Words in user message that force human handoff
+  handoffTriggers  String[] @default([])
+  fallbackMessage  String?
+  // Higher priority = preferred by router when multiple specialists match
+  priority         Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

@@ -48,11 +48,13 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     update: { lastInteractionAt: new Date() },
   });
 
+  let isNewConversation = false;
   let conversation = await prisma.conversation.findFirst({
     where: { companyId, leadId: lead.id, isActive: true },
     include: { currentAgent: true },
   });
   if (!conversation) {
+    isNewConversation = true;
     conversation = await prisma.conversation.create({
       data: { companyId, leadId: lead.id },
       include: { currentAgent: true },
@@ -104,7 +106,27 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   const aiProvider = defaultProvider;
 
   const orchestratorAgent = allAgents.find((a) => a.type === "orchestrator");
+
+  // Active hours check — if the orchestrator has hours configured and we're outside them, bail early
+  if (orchestratorAgent?.activeHoursStart != null && orchestratorAgent?.activeHoursEnd != null) {
+    const nowHour = new Date().getUTCHours();
+    const start = orchestratorAgent.activeHoursStart;
+    const end = orchestratorAgent.activeHoursEnd;
+    const inHours = start <= end ? nowHour >= start && nowHour < end : nowHour >= start || nowHour < end;
+    if (!inHours) {
+      const msg = orchestratorAgent.offHoursMessage ?? "Nosso atendimento está encerrado no momento. Por favor, entre em contato durante o horário comercial.";
+      await orchLog({ ...logCtx, step: "orchestrator", actor: "Sistema", message: `Fora do horário (${start}h–${end}h UTC). Retornando mensagem de horário.` });
+      return msg;
+    }
+  }
+
+  // Handoff trigger check — if the user says a trigger word, force handoff immediately
+  const lowerText = userText.toLowerCase();
+  const triggeredHandoff = orchestratorAgent?.handoffTriggers?.some((t) => lowerText.includes(t.toLowerCase()));
+
   let specialists = allAgents.filter((a) => a.type !== "orchestrator" && a.scope === "external");
+  // Sort specialists by priority descending so higher-priority ones are preferred by the router
+  specialists = specialists.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
   // Filter private specialists — only let through if lead's phone is whitelisted
   const privateIds = specialists.filter((s) => s.isPrivate).map((s) => s.id);
@@ -280,8 +302,19 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     finalResponse = response;
   }
 
+  // If a handoff trigger word was found in the user's message, force handoff
+  if (triggeredHandoff) finalResponse += " [TRANSBORDO]";
+
   const needsHandoff = finalResponse.includes("[TRANSBORDO]");
-  const cleanResponse = finalResponse.replace("[TRANSBORDO]", "").trim();
+  let cleanResponse = finalResponse.replace("[TRANSBORDO]", "").trim();
+  if (needsHandoff && orchestratorAgent?.fallbackMessage) {
+    cleanResponse = orchestratorAgent.fallbackMessage;
+  }
+
+  // Prepend initial message on first contact
+  if (isNewConversation && orchestratorAgent?.initialMessage) {
+    cleanResponse = `${orchestratorAgent.initialMessage}\n\n${cleanResponse}`;
+  }
 
   history.push({ role: "user", content: userText });
   history.push({ role: "assistant", content: cleanResponse });
@@ -357,6 +390,10 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   if (sentiment === "hot") {
     await prisma.lead.update({ where: { id: lead.id }, data: { temperature: "hot" } });
   }
+
+  // Response delay: simulate typing before returning (controlled per orchestrator agent)
+  const delayMs = orchestratorAgent?.responseDelayMs ?? 0;
+  if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 
   return cleanResponse;
 }

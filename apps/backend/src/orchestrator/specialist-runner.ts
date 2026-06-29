@@ -68,6 +68,8 @@ Forneça sua análise e recomendação de resposta para o orquestrador sintetiza
       systemPrompt: specialistPrompt,
       history,
       userMessage,
+      temperature: specialist.temperature != null ? Number(specialist.temperature) : undefined,
+      maxTokens: specialist.maxTokens ?? undefined,
     });
 
     logger.debug(`Specialist "${specialist.name}" responded`, { tokens: tokensIn + tokensOut, directMode });

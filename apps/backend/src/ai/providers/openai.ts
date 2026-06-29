@@ -11,6 +11,8 @@ export class OpenAIProvider implements AIProvider {
     systemPrompt: string;
     history: ChatMessage[];
     userMessage: string;
+    temperature?: number;
+    maxTokens?: number;
   }): Promise<ChatResult> {
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: "system", content: input.systemPrompt },
@@ -25,8 +27,8 @@ export class OpenAIProvider implements AIProvider {
       const completion = await client.chat.completions.create({
         model: this.model,
         messages,
-        temperature: 0.7,
-        max_tokens: 1024,
+        temperature: input.temperature ?? 0.7,
+        max_tokens: input.maxTokens ?? 1024,
       });
 
       const response = completion.choices[0]?.message?.content ?? "";

@@ -7,7 +7,7 @@ import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, SimpleGrid, Skeleton,
   ThemeIcon, Modal, TextInput, Textarea, ActionIcon, Menu, Select,
   Tabs, Divider, Drawer, ScrollArea, Paper, Tooltip, Alert,
-  Loader, Center, Collapse, Checkbox,
+  Loader, Center, Collapse, Checkbox, Slider, NumberInput,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
@@ -18,6 +18,8 @@ import {
   IconHistory, IconRestore, IconDeviceFloppy, IconTag,
   IconChevronRight, IconEye, IconEyeOff, IconInfoCircle,
   IconShieldLock, IconCrown, IconX, IconUserScan,
+  IconSettings2, IconArrowUp, IconArrowDown, IconNetwork,
+  IconClock, IconAlertTriangle, IconMessageForward,
 } from "@tabler/icons-react";
 
 interface DynamicField { key: string; label: string; type: string; placeholder?: string; description?: string; required: boolean; }
@@ -33,6 +35,16 @@ interface Agent {
   collectFields?: CollectFieldsConfig | null;
   company?: { id: string; name: string; slug: string } | null;
   phonePermissions?: PhonePermission[];
+  temperature?: number | null;
+  maxTokens?: number | null;
+  responseDelayMs?: number;
+  activeHoursStart?: number | null;
+  activeHoursEnd?: number | null;
+  offHoursMessage?: string | null;
+  initialMessage?: string | null;
+  handoffTriggers?: string[];
+  fallbackMessage?: string | null;
+  priority?: number;
 }
 
 const STANDARD_COLLECT_FIELDS = [
@@ -127,11 +139,12 @@ function CollectFieldsEditor({ value, onChange }: {
     </Stack>
   );
 }
+
 interface PromptVersion { id: string; version: number; prompt: string; label: string | null; createdAt: string; }
 interface DynamicValuesData { fields: DynamicField[]; values: Record<string, string>; autoFill: Record<string, string>; templateId: string | null; }
 
-const typeColors: Record<string, string> = { commercial: "blue", attendance: "violet", support: "green", qualification: "yellow", followup: "pink", manager: "gray", orchestrator: "orange" };
-const typeLabels: Record<string, string> = { commercial: "Comercial", attendance: "Atendimento", support: "Suporte", qualification: "Qualificação", followup: "Follow-up", manager: "Gerente", orchestrator: "Orquestrador" };
+const typeColors: Record<string, string> = { commercial: "blue", attendance: "violet", support: "green", qualification: "yellow", followup: "pink", manager: "gray", orchestrator: "orange", quoter: "teal" };
+const typeLabels: Record<string, string> = { commercial: "Comercial", attendance: "Atendimento", support: "Suporte", qualification: "Qualificação", followup: "Follow-up", manager: "Gerente", orchestrator: "Orquestrador", quoter: "Orçamentista" };
 
 // ── Activate from template ─────────────────────────────────────────────────────
 function ActivateModal({ template, onClose }: { template: AgentTemplate; onClose: () => void }) {
@@ -282,7 +295,6 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
     },
   });
 
-  // Build prompt preview by substituting values into the current agent prompt
   const previewPrompt = Object.entries(values).reduce(
     (acc, [key, val]) => acc.replaceAll(`{{${key}}}`, val || `{{${key}}}`),
     agent.prompt ?? ""
@@ -357,7 +369,6 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
             );
           })}
 
-          {/* Prompt preview */}
           <Box>
             <Button
               variant="subtle" size="xs" color="gray"
@@ -407,9 +418,8 @@ function DynamicValuesEditor({ agent, onClose }: { agent: Agent; onClose: () => 
   );
 }
 
-// ── AI Model selector + cost estimator ───────────────────────────────────────
+// ── AI Model selector ─────────────────────────────────────────────────────────
 const USD_TO_BRL = 5.5;
-// Base estimate for dropdown label: 1100 input + 300 output tokens per message
 const BASE_INPUT_TOKENS = 1100;
 const BASE_OUTPUT_TOKENS = 300;
 
@@ -482,6 +492,336 @@ function ModelSelector({
   );
 }
 
+// ── Advanced config panel (super_admin only) ──────────────────────────────────
+interface AdvancedState {
+  temperature: number;
+  maxTokens: number | null;
+  responseDelayMs: number;
+  activeHoursStart: number | null;
+  activeHoursEnd: number | null;
+  offHoursMessage: string;
+  initialMessage: string;
+  handoffTriggers: string[];
+  fallbackMessage: string;
+  priority: number;
+}
+
+function AdvancedConfigPanel({ state, onChange, agentType }: {
+  state: AdvancedState;
+  onChange: (s: AdvancedState) => void;
+  agentType: string;
+}) {
+  const [triggerInput, setTriggerInput] = useState("");
+
+  function set<K extends keyof AdvancedState>(key: K, val: AdvancedState[K]) {
+    onChange({ ...state, [key]: val });
+  }
+
+  function addTrigger() {
+    const t = triggerInput.trim().toLowerCase();
+    if (t && !state.handoffTriggers.includes(t)) {
+      set("handoffTriggers", [...state.handoffTriggers, t]);
+    }
+    setTriggerInput("");
+  }
+
+  return (
+    <Stack gap="lg" p="md">
+      {/* Priority */}
+      <Box>
+        <Text size="sm" fw={600} mb={4}>Prioridade do Agente</Text>
+        <Text size="xs" c="dimmed" mb={8}>
+          Agentes com maior prioridade são preferidos pelo router quando múltiplos especialistas correspondem à mensagem.
+        </Text>
+        <NumberInput
+          value={state.priority}
+          onChange={(v) => set("priority", Number(v) || 0)}
+          min={0} max={100} step={1}
+          leftSection={<IconArrowUp size={14} />}
+          description="0 = padrão · 100 = máxima prioridade"
+          maw={200}
+        />
+      </Box>
+
+      <Divider label="Geração de IA" labelPosition="left" />
+
+      {/* Temperature */}
+      <Box>
+        <Group justify="space-between" mb={4}>
+          <Text size="sm" fw={600}>Temperatura</Text>
+          <Badge size="sm" color="blue" variant="light">{state.temperature.toFixed(1)}</Badge>
+        </Group>
+        <Text size="xs" c="dimmed" mb={8}>
+          Controla a criatividade das respostas. 0 = mais preciso e repetitivo · 2 = mais criativo e variado.
+        </Text>
+        <Slider
+          value={state.temperature}
+          onChange={(v) => set("temperature", v)}
+          min={0} max={2} step={0.1}
+          marks={[
+            { value: 0, label: "0" },
+            { value: 0.7, label: "0.7" },
+            { value: 1, label: "1" },
+            { value: 2, label: "2" },
+          ]}
+          mb="md"
+        />
+      </Box>
+
+      {/* Max tokens */}
+      <Box>
+        <Text size="sm" fw={600} mb={4}>Limite de tokens na resposta</Text>
+        <Text size="xs" c="dimmed" mb={8}>
+          Tamanho máximo da resposta gerada. Deixe vazio para usar o padrão (1024).
+        </Text>
+        <NumberInput
+          value={state.maxTokens ?? ""}
+          onChange={(v) => set("maxTokens", v === "" ? null : Number(v))}
+          placeholder="1024 (padrão)"
+          min={64} max={4096} step={64}
+          maw={200}
+        />
+      </Box>
+
+      {/* Response delay */}
+      <Box>
+        <Text size="sm" fw={600} mb={4}>Atraso na resposta (ms)</Text>
+        <Text size="xs" c="dimmed" mb={8}>
+          Simula tempo de digitação antes de enviar a resposta. Útil para dar sensação de atendimento humano.
+        </Text>
+        <NumberInput
+          value={state.responseDelayMs}
+          onChange={(v) => set("responseDelayMs", Number(v) || 0)}
+          min={0} max={30000} step={500}
+          leftSection={<IconClock size={14} />}
+          description="0 ms = resposta imediata · 3000 ms = 3 segundos"
+          maw={260}
+        />
+      </Box>
+
+      <Divider label="Horário de atendimento" labelPosition="left" />
+
+      <Box>
+        <Text size="sm" fw={600} mb={4}>Horário ativo (UTC)</Text>
+        <Text size="xs" c="dimmed" mb={8}>
+          Fora deste horário o agente retorna a mensagem de horário encerrado. Deixe vazio para atender 24h.
+        </Text>
+        <Group gap="sm" align="flex-start">
+          <NumberInput
+            label="Início (hora UTC)"
+            value={state.activeHoursStart ?? ""}
+            onChange={(v) => set("activeHoursStart", v === "" ? null : Number(v))}
+            min={0} max={23} placeholder="ex: 9"
+            maw={140}
+          />
+          <NumberInput
+            label="Fim (hora UTC)"
+            value={state.activeHoursEnd ?? ""}
+            onChange={(v) => set("activeHoursEnd", v === "" ? null : Number(v))}
+            min={0} max={23} placeholder="ex: 18"
+            maw={140}
+          />
+        </Group>
+        {(state.activeHoursStart != null || state.activeHoursEnd != null) && (
+          <Alert mt="sm" icon={<IconInfoCircle size={14} />} color="blue" variant="light" radius="md">
+            Atende das {state.activeHoursStart ?? "?"}h às {state.activeHoursEnd ?? "?"}h UTC (ajuste para o fuso horário do servidor).
+          </Alert>
+        )}
+      </Box>
+
+      <Textarea
+        label="Mensagem fora do horário"
+        description="Enviada automaticamente quando o cliente escreve fora do horário ativo."
+        placeholder="Olá! Nosso atendimento funciona das 9h às 18h (horário de Brasília). Retornaremos em breve!"
+        value={state.offHoursMessage}
+        onChange={(e) => set("offHoursMessage", e.currentTarget.value)}
+        minRows={2}
+      />
+
+      {agentType === "orchestrator" && (
+        <>
+          <Divider label="Mensagem de boas-vindas" labelPosition="left" />
+          <Textarea
+            label="Mensagem inicial"
+            description="Enviada automaticamente no primeiro contato do cliente (antes da resposta gerada pela IA)."
+            placeholder="Olá! Bem-vindo à [Empresa]. Sou seu assistente virtual. Como posso ajudar?"
+            value={state.initialMessage}
+            onChange={(e) => set("initialMessage", e.currentTarget.value)}
+            leftSection={<IconMessageForward size={14} />}
+            minRows={2}
+          />
+        </>
+      )}
+
+      <Divider label="Transbordo para humano" labelPosition="left" />
+
+      {/* Handoff triggers */}
+      <Box>
+        <Text size="sm" fw={600} mb={4}>Palavras-gatilho de transbordo</Text>
+        <Text size="xs" c="dimmed" mb={8}>
+          Se o cliente escrever qualquer uma dessas palavras, o atendimento é transferido automaticamente para um humano.
+        </Text>
+        <Group gap="xs" mb={8} wrap="wrap">
+          {state.handoffTriggers.map((t) => (
+            <Badge key={t} size="sm" variant="outline" color="red"
+              rightSection={<ActionIcon size={12} variant="transparent" color="red" onClick={() => set("handoffTriggers", state.handoffTriggers.filter((x) => x !== t))}>×</ActionIcon>}>
+              {t}
+            </Badge>
+          ))}
+          {state.handoffTriggers.length === 0 && <Text size="xs" c="dimmed">Nenhuma</Text>}
+        </Group>
+        <Group gap="xs" wrap="nowrap">
+          <TextInput
+            size="xs" placeholder="ex: falar com humano, atendente..."
+            value={triggerInput} onChange={(e) => setTriggerInput(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTrigger(); } }}
+            style={{ flex: 1 }}
+          />
+          <Button size="xs" variant="light" color="red" onClick={addTrigger} disabled={!triggerInput.trim()}>
+            <IconPlus size={13} />
+          </Button>
+        </Group>
+      </Box>
+
+      <Textarea
+        label="Mensagem de transbordo"
+        description="Enviada quando o atendimento é transferido para um humano (substitui a resposta da IA)."
+        placeholder="Vou te conectar com um de nossos atendentes. Aguarde um momento!"
+        value={state.fallbackMessage}
+        onChange={(e) => set("fallbackMessage", e.currentTarget.value)}
+        leftSection={<IconAlertTriangle size={14} />}
+        minRows={2}
+      />
+    </Stack>
+  );
+}
+
+// ── Flow diagram ──────────────────────────────────────────────────────────────
+function FlowDiagram({ agents }: { agents: Agent[] }) {
+  const orch = agents.find((a) => a.type === "orchestrator" && a.isActive);
+  const specialists = agents
+    .filter((a) => a.type !== "orchestrator" && a.scope === "external" && a.isActive)
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+
+  const BOX_W = 148, BOX_H = 58, GAP_X = 28, GAP_Y = 56;
+  const NODE_R = 8;
+  const specialistCount = Math.max(specialists.length, 1);
+  const rowWidth = specialistCount * BOX_W + (specialistCount - 1) * GAP_X;
+  const svgW = Math.max(rowWidth + 80, 560);
+  const centerX = svgW / 2;
+
+  const phases = [
+    { label: "Cliente", sub: "WhatsApp", color: "#10b981", x: centerX - BOX_W / 2, y: 20 },
+    { label: orch?.name ?? "Sem orquestrador", sub: "Orquestrador", color: "#f97316", x: centerX - BOX_W / 2, y: 20 + BOX_H + GAP_Y },
+    { label: "Router IA", sub: "Seleção inteligente", color: "#3b82f6", x: centerX - BOX_W / 2, y: 20 + (BOX_H + GAP_Y) * 2 },
+  ];
+
+  const specialistY = 20 + (BOX_H + GAP_Y) * 3;
+  const specialistBoxes = specialists.map((s, i) => {
+    const totalW = specialists.length * BOX_W + (specialists.length - 1) * GAP_X;
+    const startX = centerX - totalW / 2;
+    return { ...s, x: startX + i * (BOX_W + GAP_X), y: specialistY };
+  });
+
+  const synthY = specialistY + BOX_H + GAP_Y;
+  const responseY = synthY + (specialists.length > 1 ? BOX_H + GAP_Y : 0);
+  const showSynth = specialists.length > 1;
+  const svgH = responseY + BOX_H + 30;
+
+  function NodeBox({ x, y, label, sub, color }: { x: number; y: number; label: string; sub: string; color: string }) {
+    return (
+      <g>
+        <rect x={x} y={y} width={BOX_W} height={BOX_H} rx={NODE_R} fill={color + "18"} stroke={color} strokeWidth={1.5} />
+        <text x={x + BOX_W / 2} y={y + 20} textAnchor="middle" fill={color} fontSize={12} fontWeight="600" fontFamily="inherit">
+          {label.length > 18 ? label.slice(0, 17) + "…" : label}
+        </text>
+        <text x={x + BOX_W / 2} y={y + 37} textAnchor="middle" fill="#94a3b8" fontSize={10} fontFamily="inherit">{sub}</text>
+      </g>
+    );
+  }
+
+  function Arrow({ x1, y1, x2, y2, color = "#94a3b8" }: { x1: number; y1: number; x2: number; y2: number; color?: string }) {
+    const midY = (y1 + y2) / 2;
+    const d = x1 === x2
+      ? `M ${x1} ${y1} L ${x2} ${y2}`
+      : `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+    return (
+      <>
+        <defs>
+          <marker id={`arrow-${x1}-${y1}`} markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L6,3 z" fill={color} />
+          </marker>
+        </defs>
+        <path d={d} fill="none" stroke={color} strokeWidth={1.5} strokeDasharray="4,3"
+          markerEnd={`url(#arrow-${x1}-${y1})`} />
+      </>
+    );
+  }
+
+  return (
+    <Box style={{ overflowX: "auto", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0", padding: 16 }}>
+      <svg width={svgW} height={svgH} style={{ display: "block", margin: "0 auto" }}>
+        {/* Phase 0 → 1 → 2 */}
+        {phases.map((p, i) => (
+          <NodeBox key={i} x={p.x} y={p.y} label={p.label} sub={p.sub} color={p.color} />
+        ))}
+        {phases.slice(0, -1).map((p, i) => (
+          <Arrow key={i} x1={p.x + BOX_W / 2} y1={p.y + BOX_H} x2={phases[i + 1].x + BOX_W / 2} y2={phases[i + 1].y} />
+        ))}
+
+        {/* Router → specialists */}
+        {specialists.length === 0 ? (
+          <NodeBox x={centerX - BOX_W / 2} y={specialistY} label="Nenhum especialista" sub="ativo" color="#94a3b8" />
+        ) : specialistBoxes.map((s) => (
+          <g key={s.id}>
+            <Arrow
+              x1={centerX}
+              y1={phases[2].y + BOX_H}
+              x2={s.x + BOX_W / 2}
+              y2={s.y}
+              color={typeColors[s.type] ? "#" + ({ blue: "3b82f6", green: "10b981", violet: "8b5cf6", yellow: "eab308", pink: "ec4899", teal: "14b8a6", orange: "f97316", gray: "64748b" }[typeColors[s.type]] ?? "3b82f6") : "#3b82f6"}
+            />
+            <NodeBox x={s.x} y={s.y} label={s.name} sub={typeLabels[s.type] ?? s.type} color={typeColors[s.type] ? "#3b82f6" : "#64748b"} />
+            {s.priority != null && s.priority > 0 && (
+              <text x={s.x + BOX_W - 6} y={s.y + 14} textAnchor="end" fill="#f97316" fontSize={9} fontWeight="700">P{s.priority}</text>
+            )}
+          </g>
+        ))}
+
+        {/* Synthesizer (only if >1 specialist) */}
+        {showSynth && (
+          <>
+            {specialistBoxes.map((s) => (
+              <Arrow key={s.id} x1={s.x + BOX_W / 2} y1={s.y + BOX_H} x2={centerX} y2={synthY} />
+            ))}
+            <NodeBox x={centerX - BOX_W / 2} y={synthY} label="Sintetizador" sub="Orquestrador" color="#8b5cf6" />
+          </>
+        )}
+
+        {/* → Response */}
+        <Arrow
+          x1={centerX}
+          y1={(showSynth ? synthY : specialistY) + BOX_H}
+          x2={centerX}
+          y2={responseY}
+        />
+        <NodeBox x={centerX - BOX_W / 2} y={responseY} label="Resposta" sub="WhatsApp" color="#10b981" />
+      </svg>
+
+      {specialists.length > 0 && (
+        <Group gap="xs" mt="md" wrap="wrap" justify="center">
+          {specialists.map((s) => (
+            <Badge key={s.id} size="xs" color={typeColors[s.type] ?? "gray"} variant="light"
+              leftSection={s.priority ? <span style={{ fontWeight: 700 }}>P{s.priority}</span> : undefined}>
+              {s.name}
+            </Badge>
+          ))}
+        </Group>
+      )}
+    </Box>
+  );
+}
+
 // ── Full prompt editor (super_admin only) ─────────────────────────────────────
 function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void }) {
   const qc = useQueryClient();
@@ -495,9 +835,32 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
   const [showSaveLabel, setShowSaveLabel] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
 
+  const [advanced, setAdvanced] = useState<AdvancedState>({
+    temperature: Number(agent.temperature ?? 0.7),
+    maxTokens: agent.maxTokens ?? null,
+    responseDelayMs: agent.responseDelayMs ?? 0,
+    activeHoursStart: agent.activeHoursStart ?? null,
+    activeHoursEnd: agent.activeHoursEnd ?? null,
+    offHoursMessage: agent.offHoursMessage ?? "",
+    initialMessage: agent.initialMessage ?? "",
+    handoffTriggers: agent.handoffTriggers ?? [],
+    fallbackMessage: agent.fallbackMessage ?? "",
+    priority: agent.priority ?? 0,
+  });
+
   const isDirty = promptText !== agent.prompt
     || JSON.stringify(keywords) !== JSON.stringify(agent.triggerKeywords)
-    || aiModel !== (agent.aiModel ?? null);
+    || aiModel !== (agent.aiModel ?? null)
+    || advanced.temperature !== Number(agent.temperature ?? 0.7)
+    || advanced.maxTokens !== (agent.maxTokens ?? null)
+    || advanced.responseDelayMs !== (agent.responseDelayMs ?? 0)
+    || advanced.activeHoursStart !== (agent.activeHoursStart ?? null)
+    || advanced.activeHoursEnd !== (agent.activeHoursEnd ?? null)
+    || advanced.offHoursMessage !== (agent.offHoursMessage ?? "")
+    || advanced.initialMessage !== (agent.initialMessage ?? "")
+    || JSON.stringify(advanced.handoffTriggers) !== JSON.stringify(agent.handoffTriggers ?? [])
+    || advanced.fallbackMessage !== (agent.fallbackMessage ?? "")
+    || advanced.priority !== (agent.priority ?? 0);
 
   const { data: versions, isLoading: versionsLoading } = useQuery<PromptVersion[]>({
     queryKey: ["prompt-versions", agent.id],
@@ -507,7 +870,20 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
   const saveMutation = useMutation({
     mutationFn: async () => {
       await api.post(`/agents/${agent.id}/prompt-versions`, { prompt: promptText, label: saveLabel.trim() || undefined, keywords });
-      await api.patch(`/agents/${agent.id}`, { aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null });
+      await api.patch(`/agents/${agent.id}`, {
+        aiModel: aiModel ?? null,
+        aiProvider: aiModel ? "openai" : null,
+        temperature: advanced.temperature,
+        maxTokens: advanced.maxTokens,
+        responseDelayMs: advanced.responseDelayMs,
+        activeHoursStart: advanced.activeHoursStart,
+        activeHoursEnd: advanced.activeHoursEnd,
+        offHoursMessage: advanced.offHoursMessage || null,
+        initialMessage: advanced.initialMessage || null,
+        handoffTriggers: advanced.handoffTriggers,
+        fallbackMessage: advanced.fallbackMessage || null,
+        priority: advanced.priority,
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
@@ -599,6 +975,7 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
               <Group gap={4}>
                 <Badge size="xs" color={typeColors[agent.type] ?? "gray"} variant="light">{typeLabels[agent.type] ?? agent.type}</Badge>
                 <Badge size="xs" color="gray" variant="outline">v{agent.promptVersion}</Badge>
+                {(agent.priority ?? 0) > 0 && <Badge size="xs" color="orange" variant="light">P{agent.priority}</Badge>}
               </Group>
             </Box>
           </Group>
@@ -625,32 +1002,44 @@ function PromptEditor({ agent, onClose }: { agent: Agent; onClose: () => void })
         )}
       </Box>
 
-      {/* Body */}
-      {isMobile ? (
-        <Tabs defaultValue="editor" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <Tabs.List px="md" style={{ flexShrink: 0 }}>
-            <Tabs.Tab value="editor" leftSection={<IconEdit size={13} />}>Editor</Tabs.Tab>
-            <Tabs.Tab value="history" leftSection={<IconHistory size={13} />}>
-              Histórico {versions && versions.length > 0 && <Badge size="xs" ml={4} color="violet" variant="filled">{versions.length}</Badge>}
-            </Tabs.Tab>
-          </Tabs.List>
-          <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}>
+      {/* Body — always tabbed */}
+      <Tabs defaultValue="editor" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <Tabs.List px="md" style={{ flexShrink: 0 }}>
+          <Tabs.Tab value="editor" leftSection={<IconEdit size={13} />}>Editor</Tabs.Tab>
+          <Tabs.Tab value="advanced" leftSection={<IconSettings2 size={13} />}>
+            Avançado
+            {(advanced.handoffTriggers.length > 0 || advanced.activeHoursStart != null || advanced.initialMessage) && (
+              <Badge size="xs" ml={4} color="orange" variant="filled" circle>!</Badge>
+            )}
+          </Tabs.Tab>
+          <Tabs.Tab value="history" leftSection={<IconHistory size={13} />}>
+            Histórico {versions && versions.length > 0 && <Badge size="xs" ml={4} color="violet" variant="filled">{versions.length}</Badge>}
+          </Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}>
+          {isMobile ? (
             <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
-          </Tabs.Panel>
-          <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            {HistorySidebar()}
-          </Tabs.Panel>
-        </Tabs>
-      ) : (
-        <Box style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
-          <Box style={{ flex: 1, overflow: "auto" }}>
-            <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
-          </Box>
-          <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            {HistorySidebar()}
-          </Box>
-        </Box>
-      )}
+          ) : (
+            <Box style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+              <Box style={{ flex: 1, overflow: "auto" }}>
+                <EditorPanel promptText={promptText} setPromptText={setPromptText} keywords={keywords} setKeywords={setKeywords} kwInput={kwInput} setKwInput={setKwInput} addKeyword={addKeyword} vars={vars} aiModel={aiModel} setAiModel={setAiModel} />
+              </Box>
+              <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <HistorySidebar />
+              </Box>
+            </Box>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="advanced" style={{ flex: 1, overflow: "auto" }}>
+          <AdvancedConfigPanel state={advanced} onChange={setAdvanced} agentType={agent.type} />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <HistorySidebar />
+        </Tabs.Panel>
+      </Tabs>
     </Box>
   );
 }
@@ -741,9 +1130,13 @@ export default function AgentsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["agents"] }); notifications.show({ message: "Agente removido", color: "orange" }); },
   });
 
+  const priorityMutation = useMutation({
+    mutationFn: ({ id, priority }: { id: string; priority: number }) => api.patch(`/agents/${id}`, { priority }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["agents"] }); },
+  });
+
   const allAgents = agentsData?.data ?? [];
 
-  // Build unique company list for super_admin filter dropdown
   const companies = isSuperAdmin
     ? Array.from(new Map(allAgents.filter((a) => a.company).map((a) => [a.company!.id, a.company!])).values())
     : [];
@@ -754,6 +1147,9 @@ export default function AgentsPage() {
 
   const templates = (templatesData?.data ?? []).filter((t) => !allAgents.some((a) => a.templateId === t.id && a.isActive));
   const hasOrchestrator = agents.some((a) => a.type === "orchestrator" && a.isActive);
+
+  // Sorted by priority for the flow diagram
+  const sortedAgents = [...agents].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
   const drawerTitle = editing
     ? isSuperAdmin
@@ -812,6 +1208,7 @@ export default function AgentsPage() {
       <Tabs defaultValue="active">
         <Tabs.List mb="md">
           <Tabs.Tab value="active" leftSection={<IconRobot size={16} />}>Meus Agentes ({agents.length})</Tabs.Tab>
+          {isSuperAdmin && <Tabs.Tab value="flow" leftSection={<IconNetwork size={16} />}>Diagrama do Fluxo</Tabs.Tab>}
           <Tabs.Tab value="templates" leftSection={<IconPlus size={16} />}>Ativar Agente ({templates.length} disponíveis)</Tabs.Tab>
         </Tabs.List>
 
@@ -830,11 +1227,42 @@ export default function AgentsPage() {
             </Card>
           ) : (
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
-              {agents.map((agent) => (
+              {sortedAgents.map((agent, idx) => (
                 <Card key={agent.id} padding="lg" radius="lg" withBorder shadow="sm" style={{ display: "flex", flexDirection: "column" }}>
                   <Group justify="space-between" mb="md">
                     <ThemeIcon size={40} radius="md" color={typeColors[agent.type] ?? "gray"} variant="light"><IconRobot size={20} /></ThemeIcon>
                     <Group gap={6}>
+                      {/* Priority badge + up/down buttons for super_admin */}
+                      {isSuperAdmin && (
+                        <Group gap={2}>
+                          <Tooltip label="Aumentar prioridade">
+                            <ActionIcon size="xs" variant="subtle" color="orange"
+                              disabled={idx === 0}
+                              onClick={() => {
+                                const prev = sortedAgents[idx - 1];
+                                if (prev) {
+                                  priorityMutation.mutate({ id: agent.id, priority: (prev.priority ?? 0) + 1 });
+                                }
+                              }}>
+                              <IconArrowUp size={11} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Diminuir prioridade">
+                            <ActionIcon size="xs" variant="subtle" color="gray"
+                              disabled={idx === sortedAgents.length - 1}
+                              onClick={() => {
+                                const next = sortedAgents[idx + 1];
+                                const newPriority = Math.max(0, (next?.priority ?? 0) - 1);
+                                priorityMutation.mutate({ id: agent.id, priority: newPriority });
+                              }}>
+                              <IconArrowDown size={11} />
+                            </ActionIcon>
+                          </Tooltip>
+                          {(agent.priority ?? 0) > 0 && (
+                            <Badge size="xs" color="orange" variant="light">P{agent.priority}</Badge>
+                          )}
+                        </Group>
+                      )}
                       {agent.type === "orchestrator" && !isSuperAdmin && (
                         <Tooltip label="Este agente é obrigatório para o funcionamento do sistema" withArrow>
                           <Badge color="orange" variant="light" size="sm" leftSection={<IconCrown size={10} />}>Obrigatório</Badge>
@@ -877,6 +1305,17 @@ export default function AgentsPage() {
                       {agent.scope === "external" ? "WhatsApp" : "Interno"}
                     </Badge>
                     <Badge color="gray" variant="light" size="xs" leftSection={<IconHistory size={9} />}>v{agent.promptVersion}</Badge>
+                    {/* Advanced config indicators */}
+                    {(agent.activeHoursStart != null) && (
+                      <Tooltip label={`Ativo ${agent.activeHoursStart}h–${agent.activeHoursEnd}h UTC`}>
+                        <Badge color="teal" variant="light" size="xs" leftSection={<IconClock size={9} />}>Horário</Badge>
+                      </Tooltip>
+                    )}
+                    {(agent.handoffTriggers?.length ?? 0) > 0 && (
+                      <Tooltip label={`${agent.handoffTriggers!.length} gatilho(s) de transbordo`}>
+                        <Badge color="red" variant="light" size="xs" leftSection={<IconAlertTriangle size={9} />}>Gatilhos</Badge>
+                      </Tooltip>
+                    )}
                   </Group>
 
                   {agent.triggerKeywords.length > 0 && (
@@ -893,6 +1332,34 @@ export default function AgentsPage() {
               ))}
             </SimpleGrid>
           )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="flow">
+          <Stack gap="md">
+            <Box>
+              <Text fw={600} mb={4}>Diagrama do Fluxo de Atendimento</Text>
+              <Text size="sm" c="dimmed">Visualização da arquitetura multi-agente — agentes especialistas ordenados por prioridade.</Text>
+            </Box>
+            {loadingAgents ? (
+              <Skeleton height={400} radius="lg" />
+            ) : (
+              <FlowDiagram agents={sortedAgents} />
+            )}
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
+              <Paper p="sm" radius="md" withBorder>
+                <Text size="xs" fw={600} c="orange" mb={4}>Orquestrador</Text>
+                <Text size="xs" c="dimmed">Ponto de entrada. Recebe a mensagem do WhatsApp e coordena o fluxo.</Text>
+              </Paper>
+              <Paper p="sm" radius="md" withBorder>
+                <Text size="xs" fw={600} c="blue" mb={4}>Router IA</Text>
+                <Text size="xs" c="dimmed">Analisa a mensagem e seleciona qual(is) especialista(s) deve(m) responder.</Text>
+              </Paper>
+              <Paper p="sm" radius="md" withBorder>
+                <Text size="xs" fw={600} c="violet" mb={4}>Sintetizador</Text>
+                <Text size="xs" c="dimmed">Quando múltiplos especialistas respondem, o sintetizador gera uma resposta coesa.</Text>
+              </Paper>
+            </SimpleGrid>
+          </Stack>
         </Tabs.Panel>
 
         <Tabs.Panel value="templates">
