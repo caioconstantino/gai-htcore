@@ -8,10 +8,8 @@ import {
   SimpleGrid, Tooltip,
 } from "@mantine/core";
 import { IconPlus, IconEdit, IconTrash, IconShield } from "@tabler/icons-react";
-import { useAuthStore } from "@/store/auth";
 import { PERMISSION_GROUPS, ALL_PERMISSION_KEYS } from "@/lib/permissions";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+import { api } from "@/lib/api";
 
 interface CompanyRole {
   id: string;
@@ -23,45 +21,9 @@ interface CompanyRole {
   createdAt: string;
 }
 
-function api(token: string | null) {
-  return {
-    async get(path: string) {
-      const r = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!r.ok) throw new Error(await r.text());
-      return r.json();
-    },
-    async post(path: string, body: unknown) {
-      const r = await fetch(`${API}${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      return r.json();
-    },
-    async patch(path: string, body: unknown) {
-      const r = await fetch(`${API}${path}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      return r.json();
-    },
-    async delete(path: string) {
-      const r = await fetch(`${API}${path}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(await r.text());
-    },
-  };
-}
-
 const emptyForm = { name: "", description: "", permissions: [] as string[], isDefault: false };
 
 export default function RolesPage() {
-  const { token, user } = useAuthStore();
   const qc = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<CompanyRole | null>(null);
@@ -70,23 +32,22 @@ export default function RolesPage() {
 
   const { data: roles = [], isLoading } = useQuery<CompanyRole[]>({
     queryKey: ["roles"],
-    queryFn: () => api(token).get("/api/v1/roles"),
-    enabled: !!token,
+    queryFn: () => api.get("/roles").then((r) => r.data),
   });
 
   const createMut = useMutation({
-    mutationFn: (data: typeof emptyForm) => api(token).post("/api/v1/roles", data),
+    mutationFn: (data: typeof emptyForm) => api.post("/roles", data).then((r) => r.data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["roles"] }); closeModal(); },
   });
 
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: string; data: typeof emptyForm }) =>
-      api(token).patch(`/api/v1/roles/${id}`, data),
+      api.patch(`/roles/${id}`, data).then((r) => r.data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["roles"] }); closeModal(); },
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: string) => api(token).delete(`/api/v1/roles/${id}`),
+    mutationFn: (id: string) => api.delete(`/roles/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["roles"] }); setDeleteTarget(null); },
   });
 
