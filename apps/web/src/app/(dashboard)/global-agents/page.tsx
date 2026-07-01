@@ -6,6 +6,7 @@ import {
   Box, Button, Card, Text, Title, Stack, Group, Badge, SimpleGrid, Skeleton,
   ThemeIcon, TextInput, Textarea, Select, Switch, TagsInput, ActionIcon,
   Menu, Divider, Paper, Tooltip, Drawer, ScrollArea, Loader, Center, Tabs, Modal, Alert,
+  Slider, NumberInput,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
@@ -13,7 +14,8 @@ import {
   IconRobot, IconPlus, IconDots, IconPencil, IconTrash, IconBolt,
   IconVariable, IconX, IconCheck, IconHistory, IconDeviceFloppy,
   IconTag, IconRestore, IconEdit, IconChevronRight, IconShieldLock,
-  IconAlertCircle, IconPower,
+  IconAlertCircle, IconPower, IconSettings2, IconClock, IconAlertTriangle,
+  IconMessageForward, IconArrowUp,
 } from "@tabler/icons-react";
 
 interface DynamicField {
@@ -26,6 +28,16 @@ interface AgentTemplate {
   triggerKeywords: string[];
   prompt: string; promptVersion: number; dynamicFields: DynamicField[];
   aiProvider?: string | null; aiModel?: string | null;
+  temperature?: number | null;
+  maxTokens?: number | null;
+  responseDelayMs?: number;
+  activeHoursStart?: number | null;
+  activeHoursEnd?: number | null;
+  offHoursMessage?: string | null;
+  initialMessage?: string | null;
+  handoffTriggers?: string[];
+  fallbackMessage?: string | null;
+  priority?: number;
   _count?: { instances: number };
 }
 interface PromptVersion { id: string; version: number; prompt: string; label: string | null; createdAt: string; }
@@ -201,6 +213,18 @@ function TemplateEditor({
   const [showSaveLabel, setShowSaveLabel] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
 
+  const [temperature, setTemperature] = useState(Number(template?.temperature ?? 0.7));
+  const [maxTokens, setMaxTokens] = useState<number | null>(template?.maxTokens ?? null);
+  const [responseDelayMs, setResponseDelayMs] = useState(template?.responseDelayMs ?? 0);
+  const [activeHoursStart, setActiveHoursStart] = useState<number | null>(template?.activeHoursStart ?? null);
+  const [activeHoursEnd, setActiveHoursEnd] = useState<number | null>(template?.activeHoursEnd ?? null);
+  const [offHoursMessage, setOffHoursMessage] = useState(template?.offHoursMessage ?? "");
+  const [initialMessage, setInitialMessage] = useState(template?.initialMessage ?? "");
+  const [handoffTriggers, setHandoffTriggers] = useState<string[]>(template?.handoffTriggers ?? []);
+  const [fallbackMessage, setFallbackMessage] = useState(template?.fallbackMessage ?? "");
+  const [priority, setPriority] = useState(template?.priority ?? 0);
+  const [triggerInput, setTriggerInput] = useState("");
+
   const isDirty = isEdit
     ? (promptText !== template.prompt || JSON.stringify(keywords) !== JSON.stringify(template.triggerKeywords) || name !== template.name)
     : true;
@@ -214,8 +238,16 @@ function TemplateEditor({
     enabled: !!template?.id,
   });
 
+  const advancedPayload = {
+    temperature, maxTokens, responseDelayMs,
+    activeHoursStart, activeHoursEnd,
+    offHoursMessage: offHoursMessage || null,
+    initialMessage: initialMessage || null,
+    handoffTriggers, fallbackMessage: fallbackMessage || null, priority,
+  };
+
   const createMutation = useMutation({
-    mutationFn: () => api.post("/agent-templates", { name, description, type, scope, prompt: promptText, triggerKeywords: keywords, dynamicFields, isActive, autoActivate, isPrivate, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null }),
+    mutationFn: () => api.post("/agent-templates", { name, description, type, scope, prompt: promptText, triggerKeywords: keywords, dynamicFields, isActive, autoActivate, isPrivate, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null, ...advancedPayload }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agent-templates"] });
       notifications.show({ message: "Template criado!", color: "green" });
@@ -227,7 +259,7 @@ function TemplateEditor({
   const saveMutation = useMutation({
     mutationFn: async () => {
       await api.post(`/agents/${template!.id}/prompt-versions`, { prompt: promptText, label: saveLabel.trim() || undefined, keywords });
-      await api.patch(`/agent-templates/${template!.id}`, { name, description, type, scope, isActive, autoActivate, isPrivate, dynamicFields, triggerKeywords: keywords, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null });
+      await api.patch(`/agent-templates/${template!.id}`, { name, description, type, scope, isActive, autoActivate, isPrivate, dynamicFields, triggerKeywords: keywords, aiModel: aiModel ?? null, aiProvider: aiModel ? "openai" : null, ...advancedPayload });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agent-templates"] });
@@ -433,30 +465,146 @@ function TemplateEditor({
         )}
       </Box>
 
-      {/* Body */}
-      {isMobile ? (
-        <Tabs defaultValue="editor" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <Tabs.List px="md" style={{ flexShrink: 0 }}>
-            <Tabs.Tab value="editor" leftSection={<IconEdit size={13} />}>Editor</Tabs.Tab>
-            {isEdit && (
-              <Tabs.Tab value="history" leftSection={<IconHistory size={13} />}>
-                Histórico {versions && versions.length > 0 && <Badge size="xs" ml={4} color="violet" variant="filled">{versions.length}</Badge>}
-              </Tabs.Tab>
+      {/* Body — always tabbed */}
+      <Tabs defaultValue="editor" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <Tabs.List px="md" style={{ flexShrink: 0 }}>
+          <Tabs.Tab value="editor" leftSection={<IconEdit size={13} />}>Editor</Tabs.Tab>
+          <Tabs.Tab value="advanced" leftSection={<IconSettings2 size={13} />}>
+            Avançado
+            {(handoffTriggers.length > 0 || activeHoursStart != null || initialMessage) && (
+              <Badge size="xs" ml={4} color="orange" variant="filled" circle>!</Badge>
             )}
-          </Tabs.List>
-          <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}>{EditorContent()}</Tabs.Panel>
-          {isEdit && <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>{HistorySidebar()}</Tabs.Panel>}
-        </Tabs>
-      ) : (
-        <Box style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
-          <Box style={{ flex: 1, overflow: "auto" }}>{EditorContent()}</Box>
+          </Tabs.Tab>
           {isEdit && (
-            <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              {HistorySidebar()}
+            <Tabs.Tab value="history" leftSection={<IconHistory size={13} />}>
+              Histórico {versions && versions.length > 0 && <Badge size="xs" ml={4} color="violet" variant="filled">{versions.length}</Badge>}
+            </Tabs.Tab>
+          )}
+        </Tabs.List>
+
+        <Tabs.Panel value="editor" style={{ flex: 1, overflow: "auto" }}>
+          {isMobile ? EditorContent() : (
+            <Box style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+              <Box style={{ flex: 1, overflow: "auto" }}>{EditorContent()}</Box>
+              {isEdit && (
+                <Box style={{ width: 260, flexShrink: 0, borderLeft: "1px solid var(--mantine-color-gray-2)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                  {HistorySidebar()}
+                </Box>
+              )}
             </Box>
           )}
-        </Box>
-      )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="advanced" style={{ flex: 1, overflow: "auto" }}>
+          <Stack gap="lg" p="md">
+            {/* Priority */}
+            <Box>
+              <Text size="sm" fw={600} mb={4}>Prioridade do Agente</Text>
+              <Text size="xs" c="dimmed" mb={8}>Especialistas com maior prioridade são preferidos pelo router. 0 = padrão · 100 = máxima.</Text>
+              <NumberInput value={priority} onChange={(v) => setPriority(Number(v) || 0)} min={0} max={100} step={1} leftSection={<IconArrowUp size={14} />} maw={200} />
+            </Box>
+
+            <Divider label="Geração de IA" labelPosition="left" />
+
+            <Box>
+              <Group justify="space-between" mb={4}>
+                <Text size="sm" fw={600}>Temperatura</Text>
+                <Badge size="sm" color="blue" variant="light">{temperature.toFixed(1)}</Badge>
+              </Group>
+              <Text size="xs" c="dimmed" mb={8}>0 = mais preciso e repetitivo · 2 = mais criativo e variado.</Text>
+              <Slider value={temperature} onChange={setTemperature} min={0} max={2} step={0.1}
+                marks={[{ value: 0, label: "0" }, { value: 0.7, label: "0.7" }, { value: 1, label: "1" }, { value: 2, label: "2" }]}
+                mb="md" />
+            </Box>
+
+            <Box>
+              <Text size="sm" fw={600} mb={4}>Limite de tokens na resposta</Text>
+              <Text size="xs" c="dimmed" mb={8}>Tamanho máximo da resposta gerada. Vazio = padrão (1024).</Text>
+              <NumberInput value={maxTokens ?? ""} onChange={(v) => setMaxTokens(v === "" ? null : Number(v))}
+                placeholder="1024 (padrão)" min={64} max={4096} step={64} maw={200} />
+            </Box>
+
+            <Box>
+              <Text size="sm" fw={600} mb={4}>Atraso na resposta (ms)</Text>
+              <Text size="xs" c="dimmed" mb={8}>Simula tempo de digitação. 0 = imediato · 3000 = 3 segundos.</Text>
+              <NumberInput value={responseDelayMs} onChange={(v) => setResponseDelayMs(Number(v) || 0)}
+                min={0} max={30000} step={500} leftSection={<IconClock size={14} />} maw={260} />
+            </Box>
+
+            <Divider label="Horário de atendimento" labelPosition="left" />
+
+            <Box>
+              <Text size="sm" fw={600} mb={4}>Horário ativo (UTC)</Text>
+              <Text size="xs" c="dimmed" mb={8}>Fora deste horário retorna mensagem de encerramento. Vazio = 24h.</Text>
+              <Group gap="sm" align="flex-start">
+                <NumberInput label="Início (hora UTC)" value={activeHoursStart ?? ""} onChange={(v) => setActiveHoursStart(v === "" ? null : Number(v))} min={0} max={23} placeholder="ex: 9" maw={140} />
+                <NumberInput label="Fim (hora UTC)" value={activeHoursEnd ?? ""} onChange={(v) => setActiveHoursEnd(v === "" ? null : Number(v))} min={0} max={23} placeholder="ex: 18" maw={140} />
+              </Group>
+            </Box>
+
+            <Textarea label="Mensagem fora do horário" description="Enviada quando o cliente escreve fora do horário ativo."
+              placeholder="Nosso atendimento funciona das 9h às 18h. Retornaremos em breve!"
+              value={offHoursMessage} onChange={(e) => setOffHoursMessage(e.currentTarget.value)} minRows={2} />
+
+            {type === "orchestrator" && (
+              <>
+                <Divider label="Mensagem de boas-vindas" labelPosition="left" />
+                <Textarea label="Mensagem inicial" description="Enviada automaticamente no primeiro contato do cliente."
+                  placeholder="Olá! Bem-vindo à {{company_name}}. Sou seu assistente virtual. Como posso ajudar?"
+                  value={initialMessage} onChange={(e) => setInitialMessage(e.currentTarget.value)}
+                  leftSection={<IconMessageForward size={14} />} minRows={2} />
+              </>
+            )}
+
+            <Divider label="Transbordo para humano" labelPosition="left" />
+
+            <Box>
+              <Text size="sm" fw={600} mb={4}>Palavras-gatilho de transbordo</Text>
+              <Text size="xs" c="dimmed" mb={8}>Se o cliente escrever qualquer uma dessas palavras, o atendimento é transferido para um humano.</Text>
+              <Group gap="xs" mb={8} wrap="wrap">
+                {handoffTriggers.map((t) => (
+                  <Badge key={t} size="sm" variant="outline" color="red"
+                    rightSection={<ActionIcon size={12} variant="transparent" color="red" onClick={() => setHandoffTriggers(handoffTriggers.filter((x) => x !== t))}>×</ActionIcon>}>
+                    {t}
+                  </Badge>
+                ))}
+                {handoffTriggers.length === 0 && <Text size="xs" c="dimmed">Nenhuma</Text>}
+              </Group>
+              <Group gap="xs" wrap="nowrap">
+                <TextInput size="xs" placeholder="ex: falar com humano, atendente..."
+                  value={triggerInput} onChange={(e) => setTriggerInput(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const t = triggerInput.trim().toLowerCase();
+                      if (t && !handoffTriggers.includes(t)) setHandoffTriggers([...handoffTriggers, t]);
+                      setTriggerInput("");
+                    }
+                  }}
+                  style={{ flex: 1 }} />
+                <Button size="xs" variant="light" color="red" onClick={() => {
+                  const t = triggerInput.trim().toLowerCase();
+                  if (t && !handoffTriggers.includes(t)) setHandoffTriggers([...handoffTriggers, t]);
+                  setTriggerInput("");
+                }} disabled={!triggerInput.trim()}>
+                  <IconPlus size={13} />
+                </Button>
+              </Group>
+            </Box>
+
+            <Textarea label="Mensagem de transbordo" description="Enviada quando o atendimento é transferido para humano."
+              placeholder="Vou te conectar com um de nossos atendentes. Aguarde um momento!"
+              value={fallbackMessage} onChange={(e) => setFallbackMessage(e.currentTarget.value)}
+              leftSection={<IconAlertTriangle size={14} />} minRows={2} />
+          </Stack>
+        </Tabs.Panel>
+
+        {isEdit && (
+          <Tabs.Panel value="history" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            {HistorySidebar()}
+          </Tabs.Panel>
+        )}
+      </Tabs>
     </Box>
   );
 }

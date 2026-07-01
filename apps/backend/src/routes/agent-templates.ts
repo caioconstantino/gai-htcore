@@ -28,6 +28,16 @@ const templateSchema = z.object({
   isPrivate: z.boolean().default(false).optional(),
   aiProvider: z.string().max(50).nullable().optional(),
   aiModel: z.string().max(100).nullable().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().positive().nullable().optional(),
+  responseDelayMs: z.number().int().min(0).max(30000).optional(),
+  activeHoursStart: z.number().int().min(0).max(23).nullable().optional(),
+  activeHoursEnd: z.number().int().min(0).max(23).nullable().optional(),
+  offHoursMessage: z.string().max(1000).nullable().optional(),
+  initialMessage: z.string().max(1000).nullable().optional(),
+  handoffTriggers: z.array(z.string()).optional(),
+  fallbackMessage: z.string().max(1000).nullable().optional(),
+  priority: z.number().int().min(0).max(100).optional(),
 });
 
 // All authenticated users can browse templates
