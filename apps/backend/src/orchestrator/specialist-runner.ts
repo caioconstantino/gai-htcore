@@ -32,8 +32,10 @@ export async function runSpecialist(input: {
    * Use when only one specialist is selected — saves one AI round-trip.
    */
   directMode?: boolean;
+  /** Appended to system prompt when AI is resuming after a human-handled pause. */
+  catchUpNote?: string;
 }): Promise<SpecialistResult> {
-  const { specialist, company, lead, conversation, userMessage, history, sentiment, onLog, directMode } = input;
+  const { specialist, company, lead, conversation, userMessage, history, sentiment, onLog, directMode, catchUpNote } = input;
   const aiProvider = input.getProvider ? input.getProvider(specialist) : input.aiProvider;
 
   // Quoter agents have a dedicated flow: extract items from history, generate PDF, send via WhatsApp
@@ -51,17 +53,11 @@ export async function runSpecialist(input: {
     sentiment,
   });
 
-  const specialistPrompt = directMode
-    ? baseContext
-    : `${baseContext}
+  const modeNote = directMode
+    ? ""
+    : `\n\n---\nMODO ESPECIALISTA: Você está sendo consultado pelo agente orquestrador, NÃO pelo cliente diretamente.\nForneça sua análise e recomendação de resposta para o orquestrador sintetizar.\n- Seja direto e objetivo\n- Inclua as informações relevantes da sua área de especialidade\n- Se houver necessidade de transbordo para humano, inclua a tag [TRANSBORDO]\n- Não use saudações ou despedidas — apenas sua análise especializada`;
 
----
-MODO ESPECIALISTA: Você está sendo consultado pelo agente orquestrador, NÃO pelo cliente diretamente.
-Forneça sua análise e recomendação de resposta para o orquestrador sintetizar.
-- Seja direto e objetivo
-- Inclua as informações relevantes da sua área de especialidade
-- Se houver necessidade de transbordo para humano, inclua a tag [TRANSBORDO]
-- Não use saudações ou despedidas — apenas sua análise especializada`;
+  const specialistPrompt = `${baseContext}${modeNote}${catchUpNote ?? ""}`;
 
   try {
     const { response, tokensIn, tokensOut } = await aiProvider.chat({

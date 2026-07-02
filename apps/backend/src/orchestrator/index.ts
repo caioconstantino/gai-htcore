@@ -92,6 +92,49 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     ? JSON.parse(cachedHistoryRaw)
     : [];
 
+  // Catch-up: if AI was just resumed after a human-handled pause, load missed messages and build context
+  const convCtx = (conversation.context ?? {}) as Record<string, unknown>;
+  let catchUpNote = "";
+  if (convCtx.aiResumedAt) {
+    const pausedAt = convCtx.aiPausedAt as string | undefined;
+    if (pausedAt) {
+      const pauseMessages = await prisma.message.findMany({
+        where: {
+          conversationId: convId,
+          createdAt: { gte: new Date(pausedAt) },
+          NOT: { whatsappMessageId: message.id },
+        },
+        orderBy: { createdAt: "asc" },
+        take: 30,
+        select: { direction: true, content: true, sentByUserId: true },
+      });
+
+      if (pauseMessages.length > 0) {
+        // Append pause messages to Redis history so future AI calls retain them
+        for (const m of pauseMessages) {
+          history.push({ role: m.direction === "inbound" ? "user" : "assistant", content: m.content });
+        }
+
+        // Build an instruction so the AI adapts its tone to match the human operator
+        const humanSamples = pauseMessages
+          .filter((m) => m.sentByUserId)
+          .slice(0, 5)
+          .map((m) => `"${m.content.slice(0, 200)}"`)
+          .join("\n");
+
+        catchUpNote = `\n\n━━━ IA RETOMANDO APÓS PAUSA ━━━
+Enquanto a IA estava pausada, um atendente humano continuou o atendimento. As mensagens dessa conversa já foram adicionadas ao histórico. Adapte seu tom e comunicação para ser consistente com o que foi dito pelo atendente.${humanSamples ? `\nExemplos do estilo do atendente:\n${humanSamples}` : ""}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+        await orchLog({ ...logCtx, step: "orchestrator", actor: "Sistema", message: `IA retomada após pausa — ${pauseMessages.length} mensagem(s) carregada(s) para contexto` });
+      }
+    }
+
+    // Clear resume flags — this catch-up only happens once
+    const { aiResumedAt: _r, aiPausedAt: _p, ...ctxRest } = convCtx;
+    await prisma.conversation.update({ where: { id: convId }, data: { context: JSON.parse(JSON.stringify(ctxRest)) } });
+  }
+
   // Sentiment is a fast keyword check — no await needed, runs sync
   const sentiment = analyzeSentiment(userText);
 
@@ -139,6 +182,11 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     specialists = specialists.filter((s) => !s.isPrivate || allowedSet.has(s.id));
   }
 
+  // Build specialist manifest so the orchestrator knows what specialists are active for this company
+  const specialistManifest = buildSpecialistManifest(specialists);
+  // Combined suffix injected into every orchestrator-level system prompt this turn
+  const systemSuffix = specialistManifest + catchUpNote;
+
   let finalResponse: string;
   let totalTokensIn = 0;
   let totalTokensOut = 0;
@@ -154,8 +202,6 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
     });
 
     // 1. Router — determine which specialists to call (or detect out-of-scope)
-    // Load the last active specialist IDs from conversation context for sticky routing
-    const convCtx = (conversation.context ?? {}) as Record<string, unknown>;
     const lastSpecialistIds = (convCtx.lastSpecialistIds as string[] | undefined) ?? [];
 
     await orchLog({ ...logCtx, step: "router", actor: "Router (IA)", message: "Analisando mensagem para selecionar especialistas..." });
@@ -187,7 +233,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
         // Let the orchestrator respond naturally (handles greetings, off-topic, etc.)
         const agentContext = await buildAgentContext({ company, lead, conversation, agent: orchestratorAgent, sentiment });
         const { response, tokensIn, tokensOut } = await agentProvider(orchestratorAgent).chat({
-          systemPrompt: agentContext,
+          systemPrompt: agentContext + systemSuffix,
           history,
           userMessage: userText,
         });
@@ -232,6 +278,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
         getProvider: agentProvider,
         sentiment,
         directMode,
+        catchUpNote,
         onLog: async (name, msg, meta) => {
           await orchLog({ ...logCtx, step: "specialist", actor: `Especialista: ${name}`, message: msg, metadata: meta });
         },
@@ -255,7 +302,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
       } else {
         // 3. Synthesize multiple specialist responses
         await orchLog({ ...logCtx, step: "synthesizer", actor: `Orquestrador: ${orchestratorAgent.name}`, message: "Sintetizando respostas dos especialistas..." });
-        const synthPrompt = buildSynthesizerPrompt(orchestratorAgent.prompt, specialistResults);
+        const synthPrompt = buildSynthesizerPrompt(orchestratorAgent.prompt, specialistResults) + catchUpNote;
         const { response, tokensIn, tokensOut } = await aiProvider.chat({ systemPrompt: synthPrompt, history, userMessage: userText });
         totalTokensIn += tokensIn;
         totalTokensOut += tokensOut;
@@ -273,7 +320,7 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   } else if (orchestratorAgent && specialists.length === 0) {
     await orchLog({ ...logCtx, step: "orchestrator", actor: `Orquestrador: ${orchestratorAgent.name}`, message: "Sem especialistas — respondendo diretamente" });
     const agentContext = await buildAgentContext({ company, lead, conversation, agent: orchestratorAgent, sentiment });
-    const { response, tokensIn, tokensOut } = await agentProvider(orchestratorAgent).chat({ systemPrompt: agentContext, history, userMessage: userText });
+    const { response, tokensIn, tokensOut } = await agentProvider(orchestratorAgent).chat({ systemPrompt: agentContext + systemSuffix, history, userMessage: userText });
     totalTokensIn += tokensIn;
     totalTokensOut += tokensOut;
     finalResponse = response;
@@ -396,6 +443,16 @@ export async function orchestrate(input: OrchestratorInput): Promise<string> {
   if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 
   return cleanResponse;
+}
+
+function buildSpecialistManifest(specialists: Awaited<ReturnType<typeof prisma.agent.findMany>>): string {
+  if (specialists.length === 0) return "";
+  const lines = specialists.map((s) => {
+    const kws = (s.triggerKeywords as string[]).join(", ") || "—";
+    const desc = s.description ? ` — ${s.description.slice(0, 80)}` : "";
+    return `• ${s.name} [${s.type}]${desc} | palavras-chave: ${kws}`;
+  });
+  return `\n\n━━━ ESPECIALISTAS DISPONÍVEIS NESTA EMPRESA ━━━\n${lines.join("\n")}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 }
 
 const GREETING_RE = /^(oi|olá|ola|bom\s*dia|boa\s*tarde|boa\s*noite|tudo\s*(bem|bom|certo|ótimo|otimo)|como\s*(vai|você|voce)|hey|hello|hi|e\s*a[íi]|salve|opa|eae|eai)\b/i;

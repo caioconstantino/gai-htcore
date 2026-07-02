@@ -154,8 +154,11 @@ conversationsRouter.post("/:id/pause", async (req: AuthRequest, res, next) => {
     if (req.user?.role !== "super_admin" && conversation.companyId !== req.user?.companyId) {
       res.status(403).json({ error: "Acesso negado" }); return;
     }
-    // aiPaused added via migration; use raw SQL until Prisma client is regenerated on build
     await prisma.$executeRaw`UPDATE conversations SET "aiPaused" = true WHERE id = ${req.params.id}`;
+    // Track when AI was paused so the orchestrator can load catch-up context on resume
+    const conv = await prisma.conversation.findUnique({ where: { id: req.params.id } });
+    const ctx = ((conv?.context ?? {}) as Record<string, unknown>);
+    await prisma.conversation.update({ where: { id: req.params.id }, data: { context: { ...ctx, aiPausedAt: new Date().toISOString() } } });
     const updated = await prisma.conversation.findUnique({ where: { id: req.params.id } });
     res.json(updated);
   } catch (err) { next(err); }
@@ -169,6 +172,14 @@ conversationsRouter.post("/:id/resume", async (req: AuthRequest, res, next) => {
       res.status(403).json({ error: "Acesso negado" }); return;
     }
     await prisma.$executeRaw`UPDATE conversations SET "aiPaused" = false WHERE id = ${req.params.id}`;
+    // Mark resume so orchestrator loads catch-up context on next message
+    const conv = await prisma.conversation.findUnique({ where: { id: req.params.id } });
+    const ctx = ((conv?.context ?? {}) as Record<string, unknown>);
+    const pausedAt = ctx.aiPausedAt as string | undefined;
+    await prisma.conversation.update({
+      where: { id: req.params.id },
+      data: { context: { ...ctx, aiResumedAt: new Date().toISOString(), ...(pausedAt ? { aiPausedAt: pausedAt } : {}) } },
+    });
     const updated = await prisma.conversation.findUnique({ where: { id: req.params.id } });
     res.json(updated);
   } catch (err) { next(err); }
