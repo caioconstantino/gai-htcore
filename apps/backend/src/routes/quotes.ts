@@ -9,9 +9,9 @@ quotesRouter.get("/", async (req: AuthRequest, res) => {
   const quotes = await prisma.quote.findMany({
     where: { ...(companyId ? { companyId } : {}) },
     orderBy: { createdAt: "desc" },
-    include: { items: true, lead: true },
+    include: { items: true, lead: { select: { id: true, name: true, phone: true } } },
   });
-  res.json(quotes);
+  res.json({ data: quotes, total: quotes.length });
 });
 
 quotesRouter.post("/", async (req: AuthRequest, res) => {

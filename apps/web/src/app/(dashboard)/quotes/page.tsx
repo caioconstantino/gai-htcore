@@ -33,7 +33,7 @@ export default function QuotesPage() {
   const [statusFilter, setStatusFilter] = useState<string | null>("");
   const [selected, setSelected] = useState<Quote | null>(null);
 
-  const { data, isLoading } = useQuery<{ data: Quote[] }>({
+  const { data, isLoading } = useQuery<{ data: Quote[]; total: number }>({
     queryKey: ["quotes"],
     queryFn: () => api.get("/quotes").then((r) => r.data),
   });
